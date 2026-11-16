@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-const RAILCORE_API_KEY = process.env.RAILCORE_API_KEY || 'rk_live_JYx_dkyxxTHTBgS9tA5jUXJiZRjhBEKg';
+const RAILCORE_API_KEY = process.env.RAILCORE_API_KEY;
 const BASE_URL = process.env.RAILCORE_BASE_URL || 'https://ir.railcore.tech/v1';
 
 // In-Memory Intelligent Cache
