@@ -15,13 +15,13 @@ import {
 
 export default function WelcomeScreen({ onGetStarted, onGuestExplore }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-950 via-slate-900 to-slate-950 text-white flex flex-col justify-between p-6 relative overflow-hidden select-none">
+    <div className="min-h-screen bg-gradient-to-b from-blue-950 via-slate-900 to-slate-950 text-white flex flex-col justify-between p-5 relative overflow-hidden select-none">
       {/* Decorative Background Glows */}
       <div className="absolute -top-24 -left-24 w-72 h-72 bg-blue-600/25 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute top-1/2 -right-24 w-80 h-80 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
 
       {/* Top CRIS / Indian Railways Branding */}
-      <div className="pt-8 z-10">
+      <div className=" z-10">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
             <span className="bg-amber-400 text-blue-950 font-black text-[10px] px-1.5 py-0.5 rounded tracking-normal">
@@ -40,7 +40,7 @@ export default function WelcomeScreen({ onGetStarted, onGuestExplore }) {
       </div>
 
       {/* Center Hero Section */}
-      <div className="py-6 z-10 flex flex-col items-center text-center">
+      <div className="z-10 flex flex-col items-center text-center">
         {/* Animated Train Icon Badge */}
         <div className="relative mb-6">
           <div className="w-24 h-24 rounded-3xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-amber-400 p-0.5 shadow-2xl shadow-blue-500/30">
@@ -89,7 +89,7 @@ export default function WelcomeScreen({ onGetStarted, onGuestExplore }) {
       </div>
 
       {/* Bottom Action Area */}
-      <div className="pb-6 z-10 space-y-3">
+      <div className="z-10 space-y-3">
         <button
           onClick={onGetStarted}
           className="w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold py-3.5 rounded-2xl text-sm shadow-xl shadow-blue-900/50 flex items-center justify-center gap-2 transition active:scale-95"
