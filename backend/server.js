@@ -11,6 +11,7 @@ import grievanceRoutes from './routes/grievanceRoutes.js';
 import broadcastRoutes from './routes/broadcastRoutes.js';
 import authRoutes, { initUserTable } from './routes/authRoutes.js';
 import walletRoutes, { initWalletTable } from './routes/walletRoutes.js';
+import cateringRoutes, { initCateringTables } from './routes/cateringRoutes.js';
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.use('/api/trains', trainRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/grievances', grievanceRoutes);
 app.use('/api/broadcasts', broadcastRoutes);
+app.use('/api/catering', cateringRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -63,6 +65,7 @@ const startServer = async () => {
     await initDB();
     await initUserTable();
     await initWalletTable();
+    await initCateringTables();
 
     const server = app.listen(PORT, () => {
       console.log(` RailOne Backend API Server running on http://localhost:${PORT}`);

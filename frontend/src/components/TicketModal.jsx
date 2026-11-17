@@ -1,19 +1,31 @@
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { X, Train, ShieldCheck, Download, Share2 } from 'lucide-react';
+import { X, Train, ShieldCheck, Download, AlertTriangle, Lock } from 'lucide-react';
 
 export default function TicketModal({ ticket, onClose }) {
   if (!ticket) return null;
 
+  const isPaperlessUts = (ticket.ticketType || '').toUpperCase().includes('UTS') ||
+                         (ticket.ticketType || '').toUpperCase().includes('PLATFORM') ||
+                         (ticket.ticketType || '').toUpperCase().includes('SEASON') ||
+                         (ticket.ticketType || '').toUpperCase().includes('UNRESERVED');
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl border border-slate-200 animate-in slide-in-from-bottom duration-200">
+    <div 
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 select-none"
+      onContextMenu={(e) => isPaperlessUts && e.preventDefault()}
+    >
+      <div className={`w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl border border-slate-200 animate-in slide-in-from-bottom duration-200 ${isPaperlessUts ? 'print:hidden' : ''}`}>
         
         {/* Ticket Header */}
-        <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-4 flex items-center justify-between">
+        <div className={`text-white p-4 flex items-center justify-between ${isPaperlessUts ? 'bg-gradient-to-r from-emerald-800 to-teal-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'}`}>
           <div className="flex items-center space-x-2">
-            <span className="bg-amber-400 text-blue-950 font-black text-[10px] px-1.5 py-0.5 rounded">CRIS</span>
-            <span className="font-bold text-xs uppercase tracking-wider">Indian Railways Digital Ticket</span>
+            <span className={`font-black text-[10px] px-1.5 py-0.5 rounded ${isPaperlessUts ? 'bg-amber-400 text-emerald-950' : 'bg-amber-400 text-blue-950'}`}>
+              {isPaperlessUts ? 'UTS' : 'CRIS'}
+            </span>
+            <span className="font-bold text-xs uppercase tracking-wider">
+              {isPaperlessUts ? 'Paperless Mobile Ticket (Active)' : 'Indian Railways Digital Ticket'}
+            </span>
           </div>
           <button 
             onClick={onClose}
@@ -75,34 +87,61 @@ export default function TicketModal({ ticket, onClose }) {
               <div className="font-bold text-slate-900">{ticket.passengerName}</div>
             </div>
             <div className="text-right">
-              <span className="text-[9px] font-bold text-slate-400 uppercase">Age / Gender</span>
-              <div className="font-bold text-slate-900">{ticket.age} yrs / {ticket.gender}</div>
+              <span className="text-[9px] font-bold text-slate-400 uppercase">Fare Paid</span>
+              <div className="font-bold text-slate-900">₹{ticket.fare}</div>
             </div>
           </div>
 
-          {/* CRIS Authentic QR Code */}
-          <div className="flex flex-col items-center justify-center p-3 bg-white rounded-2xl border-2 border-dashed border-slate-200">
+          {/* CRIS Authentic QR Code with Complete Ticket Details */}
+          <div className="flex flex-col items-center justify-center p-3.5 bg-white rounded-2xl border-2 border-dashed border-slate-200 relative">
             <QRCodeSVG 
-              value={`RAILONE-CRIS|PNR:${ticket.pnr}|TRAIN:${ticket.trainNumber}|BERTH:${ticket.coach}-${ticket.seat}|STATUS:${ticket.status}`}
-              size={130}
+              value={JSON.stringify({
+                issuer: 'INDIAN RAILWAYS / CRIS RAILONE',
+                pnr: ticket.pnr,
+                ticketType: ticket.ticketType || 'RESERVED',
+                train: `${ticket.trainNumber || ''} ${ticket.trainName || ''}`.trim(),
+                from: ticket.from,
+                to: ticket.to,
+                departure: ticket.departureTime || '',
+                arrival: ticket.arrivalTime || '',
+                coach: ticket.coach,
+                berth_seat: ticket.seat,
+                class: ticket.className || ticket.classType || '',
+                quota: ticket.quota || 'GN',
+                passenger: ticket.passengerName || '',
+                fare: `₹${ticket.fare}`,
+                status: ticket.status || 'CONFIRMED',
+                validity: ticket.validUntil || ticket.arrivalTime || 'Valid for travel',
+                bookingDate: ticket.bookingDate || ticket.date || 'Today'
+              })}
+              size={145}
               level="M"
+              includeMargin={true}
             />
-            <span className="text-[10px] font-semibold text-slate-400 mt-2 flex items-center gap-1">
+            <span className="text-[10px] font-semibold text-slate-500 mt-2 flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Valid for TTE Electronic Verification
+              Scan for Complete Ticket Verification
             </span>
           </div>
 
-          {/* Actions */}
-          <button 
-            onClick={() => {
-              alert("Ticket PDF downloaded to device storage!");
-              onClose();
-            }}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow"
-          >
-            <Download className="w-3.5 h-3.5" /> Download Digital Ticket
-          </button>
+          {/* Action or UTS Restriction Notice */}
+          {isPaperlessUts ? (
+            <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-2xl text-[11px] text-amber-900 flex items-start gap-2">
+              <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <strong>Non-transferable in-app ticket:</strong> Per Railway rules, General/Platform/Season tickets cannot be shared, printed or screenshotted. Show directly to TTE on screen.
+              </div>
+            </div>
+          ) : (
+            <button 
+              onClick={() => {
+                window.open(`http://localhost:5000/api/bookings/${encodeURIComponent(ticket.pnr)}/download-pdf`, '_blank');
+              }}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow"
+            >
+              <Download className="w-3.5 h-3.5" /> Download Digital Ticket (PDF)
+            </button>
+          )}
         </div>
       </div>
     </div>

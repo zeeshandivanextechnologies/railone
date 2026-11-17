@@ -41,7 +41,7 @@ const DEFAULT_AVATARS = [
   'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80'
 ];
 
-export default function ProfilePanel({ user, onLogout, onOpenAuth, bookings, onOpenTicketModal, onUpdateUser }) {
+export default function ProfilePanel({ user, walletBalance, onLogout, onOpenAuth, bookings, onOpenTicketModal, onUpdateUser }) {
   const { t, changeLanguage } = useLanguage();
 
   // Navigation Sections: MAIN | EDIT_PROFILE | HISTORY | PASSENGERS
@@ -512,7 +512,9 @@ export default function ProfilePanel({ user, onLogout, onOpenAuth, bookings, onO
         {/* Quick Wallet Summary in Profile */}
         <div className="mt-4 pt-3 border-t border-white/10 flex justify-between items-center text-xs">
           <span className="text-blue-200">R-Wallet Balance:</span>
-          <span className="font-bold text-amber-400">₹{user.wallet || 100}.00</span>
+          <span className="font-bold text-amber-400">
+            ₹{parseFloat(walletBalance !== undefined ? walletBalance : (user?.wallet ?? 0)).toFixed(2)}
+          </span>
         </div>
       </div>
 

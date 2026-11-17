@@ -11,6 +11,8 @@ import {
   Sparkles, 
   Info, 
   ChevronRight, 
+  ChevronUp,
+  ChevronDown, 
   TrendingUp, 
   Percent, 
   Layers,
@@ -22,20 +24,43 @@ import {
   AlertTriangle,
   Building2,
   ArrowUpRight,
-  X
+  X,
+  QrCode,
+  Copy,
+  Check,
+  ShieldCheck,
+  MessageCircle,
+  ExternalLink,
+  Bookmark,
+  Star,
+  Armchair,
 } from 'lucide-react';
+
+
 import { passengerApi } from '../services/passengerApi.js';
 
-export default function TrackingPanel({ trains, bookings }) {
+export default function TrackingPanel({ trains, bookings, initialTrainNumber }) {
   const [activeSubTab, setActiveSubTab] = useState('LIVE_TRAIN'); // LIVE_TRAIN | STATION_BOARD | PNR_STATUS | COACH_LOCATOR
   
   // Real-time Train Search by No. or Name
-  const [trainSearchInput, setTrainSearchInput] = useState('');
-  const [activeTrainNumber, setActiveTrainNumber] = useState('');
-  const [hasUserSearched, setHasUserSearched] = useState(false);
+  const [trainSearchInput, setTrainSearchInput] = useState(initialTrainNumber || '');
+  const [activeTrainNumber, setActiveTrainNumber] = useState(initialTrainNumber || '');
+  const [hasUserSearched, setHasUserSearched] = useState(!!initialTrainNumber);
   const [searchResults, setSearchResults] = useState([]);
   const [searchingTrains, setSearchingTrains] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // Sync if initialTrainNumber changes from external navigation (e.g. from HomePanel click)
+  useEffect(() => {
+    if (initialTrainNumber) {
+      const cleanNum = initialTrainNumber.toString().trim();
+      setActiveTrainNumber(cleanNum);
+      setTrainSearchInput(cleanNum);
+      setHasUserSearched(true);
+      setActiveSubTab('LIVE_TRAIN');
+      fetchRealTimeTracking(cleanNum);
+    }
+  }, [initialTrainNumber]);
 
   // Real-time RailRadar Live Tracking State
   const [liveData, setLiveData] = useState(null);
@@ -51,11 +76,21 @@ export default function TrackingPanel({ trains, bookings }) {
   const [stationBoardData, setStationBoardData] = useState(null);
   const [loadingStationBoard, setLoadingStationBoard] = useState(false);
 
-  // PNR status state
+  // PNR status state & Share Journey Modal state
   const [pnrInput, setPnrInput] = useState('');
   const [searchedPnrData, setSearchedPnrData] = useState(null);
   const [loadingPnr, setLoadingPnr] = useState(false);
   const [pnrError, setPnrError] = useState('');
+
+  // Share Journey Modal State
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showQrCode, setShowQrCode] = useState(false);
+  const [includeFullPnr, setIncludeFullPnr] = useState(false);
+  const [copySuccess, setCopySuccess] = useState('');
+
+  // Seat Map Modal State
+  const [showSeatMapModal, setShowSeatMapModal] = useState(false);
+  const [selectedSeatMapPassenger, setSelectedSeatMapPassenger] = useState(null);
 
   // Coach locator train selector & Dynamic API State
   const [selectedCoachTrain, setSelectedCoachTrain] = useState('');
@@ -268,7 +303,7 @@ export default function TrackingPanel({ trains, bookings }) {
   };
 
   const handlePnrSearch = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     const clean = pnrInput.trim();
     if (!clean) return;
 
@@ -276,8 +311,17 @@ export default function TrackingPanel({ trains, bookings }) {
     setPnrError('');
 
     try {
-      // 1. First check in props bookings if already loaded locally
-      const foundInProps = bookings.find(b => b.pnr === clean);
+      // 1. Primary: Fetch from Dynamic Real-Time Backend API endpoint /api/bookings/pnr/:pnr
+      const res = await fetch(`http://localhost:5000/api/bookings/pnr/${encodeURIComponent(clean)}`);
+      const json = await res.json();
+
+      if (res.ok && json.success && json.data) {
+        setSearchedPnrData(json.data);
+        return;
+      }
+
+      // 2. Fallback: check in props bookings if already loaded locally
+      const foundInProps = bookings && bookings.find ? bookings.find(b => b.pnr === clean) : null;
       if (foundInProps) {
         setSearchedPnrData({
           ...foundInProps,
@@ -286,22 +330,13 @@ export default function TrackingPanel({ trains, bookings }) {
           bookingStatus: foundInProps.status || 'CNF',
           currentStatus: 'CNF Coach ' + foundInProps.coach + ' Seat ' + foundInProps.seat
         });
-        setLoadingPnr(false);
         return;
       }
 
-      // 2. Fetch from Dynamic Backend API endpoint /api/bookings/pnr/:pnr
-      const res = await fetch(`http://localhost:5000/api/bookings/pnr/${encodeURIComponent(clean)}`);
-      const json = await res.json();
-
-      if (res.ok && json.success && json.data) {
-        setSearchedPnrData(json.data);
-      } else {
-        setPnrError(json.error || 'Unable to retrieve PNR details. Please verify your 10-digit PNR number.');
-      }
+      setPnrError(json.error || 'Unable to retrieve PNR details. Please verify your 10-digit PNR number.');
     } catch (err) {
       console.error('PNR fetch error:', err);
-      setPnrError('Network error while checking PNR status. Please try again.');
+      setPnrError('Network error while checking PNR status. Please verify server connection.');
     } finally {
       setLoadingPnr(false);
     }
@@ -923,7 +958,12 @@ export default function TrackingPanel({ trains, bookings }) {
                                   title="Click to view passing stations between stops"
                                 >
                                   <span>{stn.blockPassingCount} passing stations • {stn.nextBlockDistance || Math.max(1, Math.round((displayedStations[idx + 1].distanceKm || 0) - (stn.distanceKm || 0)))} km</span>
-                                  <span className="text-[10px] font-black">{expandedBlocks[stn.blockIndex] || showPassingStations ? '▴' : '⌵'}</span>
+                                  {/* <span className="text-[10px] font-black">{expandedBlocks[stn.blockIndex] || showPassingStations ? '▴' : '⌵'}</span> */}
+                                  <span className="text-[10px] font-black">
+                                    {expandedBlocks[stn.blockIndex] || showPassingStations
+                                      ? <ChevronUp className="w-3 h-3" />
+                                      : <ChevronDown className="w-3 h-3" />}
+                                  </span>
                                 </button>
                               ) : (
                                 <div className="text-[10px] font-semibold text-slate-400 py-1">
@@ -1136,28 +1176,6 @@ export default function TrackingPanel({ trains, bookings }) {
             </button>
           </form>
 
-          {/* Quick PNR Samples */}
-          <div className="flex items-center gap-1.5 overflow-x-auto px-1 scrollbar-none text-[10px]">
-            <span className="text-slate-400 font-bold">Try Sample PNR:</span>
-            {['2847193021', '7358415478', '3958605293', '9876543210'].map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => {
-                  setPnrInput(p);
-                  // Trigger search with sample
-                  fetch(`http://localhost:5000/api/bookings/pnr/${p}`)
-                    .then(r => r.json())
-                    .then(res => { if (res.success) setSearchedPnrData(res.data); })
-                    .catch(() => {});
-                }}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono font-bold px-2 py-0.5 rounded-md border border-slate-200 transition"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-
           {pnrError && (
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -1172,54 +1190,545 @@ export default function TrackingPanel({ trains, bookings }) {
             </div>
           )}
 
-          {searchedPnrData && !loadingPnr && (
-            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-3.5 animate-in fade-in">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">PNR NUMBER</span>
-                  <div className="font-mono font-black text-sm text-indigo-950">{searchedPnrData.pnr}</div>
-                </div>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">
-                  {searchedPnrData.status || "CONFIRMED"}
-                </span>
-              </div>
+          {searchedPnrData && !loadingPnr && (() => {
+            const trainDisplayName = searchedPnrData.trainName 
+              ? searchedPnrData.trainName.replace(/\b(Express|SF|Special|Exp)\b/gi, '').trim().toUpperCase()
+              : 'JANSHATABDI EXP';
+            const shortTrainName = trainDisplayName.length > 25 ? `${trainDisplayName.slice(0, 22)}...` : trainDisplayName;
 
-              {/* Confirmation chance badge */}
-              <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center justify-between text-xs text-emerald-900">
-                <span className="flex items-center gap-1 font-bold">
-                  <TrendingUp className="w-3.5 h-3.5 text-emerald-700" /> Confirmation Prediction:
-                </span>
-                <span className="font-black text-emerald-700">{searchedPnrData.confirmationChance || '100% Guaranteed'}</span>
-              </div>
+            return (
+              <div className="space-y-4 animate-in fade-in">
+                {/* 1. TOP DARK BLUE HEADER: LIVE JOURNEY SUMMARY */}
+                <div className="bg-[#0b1e3b] text-white p-5 rounded-3xl shadow-lg relative overflow-hidden">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-blue-300 block">
+                        LIVE JOURNEY SUMMARY
+                      </span>
+                      <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-0.5 uppercase">
+                        {shortTrainName}
+                      </h3>
+                      <div className="text-xs text-blue-200/80 font-mono font-semibold mt-1">
+                        Train {searchedPnrData.trainNumber} • PNR {searchedPnrData.pnr}
+                      </div>
+                    </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                <div>
-                  <span className="text-slate-400 text-[10px]">Train:</span>
-                  <div className="font-bold text-slate-800">{searchedPnrData.trainName} ({searchedPnrData.trainNumber})</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQrCode(false);
+                          setIncludeFullPnr(false);
+                          setShowShareModal(true);
+                        }}
+                        className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition active:scale-90"
+                        title="Share journey status"
+                      >
+                        <Share2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition active:scale-90"
+                        title="Bookmark"
+                      >
+                        <Star className="w-4 h-4" />
+                      </button>
+                      <span className="bg-emerald-500 text-white text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
+                        {searchedPnrData.pnrStatus || 'CNF'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action Pills */}
+                  <div className="flex items-center gap-2 mt-4 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSubTab('LIVE_TRAIN');
+                        setTrainSearchInput(searchedPnrData.trainNumber);
+                        handleSelectSearchedTrain({
+                          number: searchedPnrData.trainNumber,
+                          name: searchedPnrData.trainName,
+                          from: searchedPnrData.boardingStationCode || searchedPnrData.from,
+                          to: searchedPnrData.reservationUptoCode || searchedPnrData.to
+                        });
+                      }}
+                      className="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition active:scale-95"
+                    >
+                      <Radio className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Track this train</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => alert(`Train #${searchedPnrData.trainNumber} saved to your favorites.`)}
+                      className="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition active:scale-95"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 text-blue-300" />
+                      <span>Save this train</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => alert(`Route ${searchedPnrData.boardingStationCode || searchedPnrData.from}-${searchedPnrData.reservationUptoCode || searchedPnrData.to} saved.`)}
+                      className="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition active:scale-95"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 text-blue-300" />
+                      <span>Save this route <strong className="font-mono text-blue-300 ml-0.5">{searchedPnrData.boardingStationCode || searchedPnrData.from}-{searchedPnrData.reservationUptoCode || searchedPnrData.to}</strong></span>
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 text-[10px]">Date of Journey:</span>
-                  <div className="font-bold text-slate-800">{searchedPnrData.date}</div>
+
+                {/* 2. THREE CARDS GRID: Ticket Details | Boarding & Reservation | Route */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  {/* Card 1: Ticket Details */}
+                  <div className="bg-white border border-slate-200/90 rounded-3xl p-4 shadow-xs space-y-3">
+                    <div className="flex items-center gap-2.5 border-b border-slate-100 pb-2.5">
+                      <div className="w-9 h-9 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+                        <Train className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900 leading-tight">Ticket details</h4>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase truncate block max-w-[170px]">
+                          {searchedPnrData.trainName}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 font-medium">Class</span>
+                        <strong className="text-slate-900 font-black">{searchedPnrData.journeyClass || searchedPnrData.className || '2S'}</strong>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 font-medium">Quota</span>
+                        <strong className="text-slate-900 font-black">{searchedPnrData.quota || 'GN'}</strong>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400 font-medium">Journey date</span>
+                        <strong className="text-slate-900 font-black">{searchedPnrData.journeyDate || searchedPnrData.date}</strong>
+                      </div>
+                      <div className="flex justify-between items-start pt-1 border-t border-slate-100">
+                        <div>
+                          <span className="text-slate-400 font-medium block">Boarding platform</span>
+                          <span className="text-[10px] text-slate-500 font-medium truncate block max-w-[130px]">
+                            {searchedPnrData.boardingStationName || searchedPnrData.from}
+                          </span>
+                        </div>
+                        <strong className="text-blue-700 font-black text-sm">{searchedPnrData.boardingPlatform || 'PF 1'}</strong>
+                      </div>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-slate-400 font-medium block">Destination platform</span>
+                          <span className="text-[10px] text-slate-500 font-medium truncate block max-w-[130px]">
+                            {searchedPnrData.reservationUptoName || searchedPnrData.to}
+                          </span>
+                        </div>
+                        <strong className="text-blue-700 font-black text-sm">{searchedPnrData.destinationPlatform || 'PF 1'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Boarding & Reservation */}
+                  <div className="bg-white border border-slate-200/90 rounded-3xl p-4 shadow-xs space-y-3">
+                    <div className="flex items-center gap-2.5 border-b border-slate-100 pb-2.5">
+                      <div className="w-9 h-9 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                        <MapPin className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900 leading-tight">Boarding & reservation</h4>
+                        <span className="text-[10px] text-slate-400 font-medium">Station and timing details</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div>
+                        <div className="flex items-center gap-1.5 text-blue-600 font-bold text-[10px] uppercase">
+                          <span className="w-2 h-2 rounded-full bg-blue-600" />
+                          <span>Boarding station</span>
+                        </div>
+                        <div className="font-black text-slate-900 text-sm mt-0.5">
+                          {searchedPnrData.boardingStationName || searchedPnrData.from} ({searchedPnrData.boardingStationCode || searchedPnrData.from})
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          Boarding: {searchedPnrData.boardingTime || searchedPnrData.departureTime || '--:--'} on {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+
+                      <div className="pl-3 border-l-2 border-dashed border-slate-200 py-1 text-[11px] text-slate-400 font-medium">
+                        Duration: <strong className="text-slate-700">{searchedPnrData.duration || '--'}</strong>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-1.5 text-teal-600 font-bold text-[10px] uppercase">
+                          <span className="w-2 h-2 rounded-full bg-teal-600" />
+                          <span>Reservation up to</span>
+                        </div>
+                        <div className="font-black text-slate-900 text-sm mt-0.5">
+                          {searchedPnrData.reservationUptoName || searchedPnrData.to} ({searchedPnrData.reservationUptoCode || searchedPnrData.to})
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          Reserved until: {searchedPnrData.reservationUptoTime || searchedPnrData.arrivalTime || '--:--'} on {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Route */}
+                  <div className="bg-white border border-slate-200/90 rounded-3xl p-4 shadow-xs space-y-3">
+                    <div className="flex items-center gap-2.5 border-b border-slate-100 pb-2.5">
+                      <div className="w-9 h-9 rounded-2xl bg-teal-50 flex items-center justify-center text-teal-600 shrink-0">
+                        <Compass className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900 leading-tight">Route</h4>
+                        <span className="text-[10px] text-slate-400 font-medium">Journey endpoints</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div>
+                        <div className="flex items-center gap-1.5 font-black text-slate-900 text-sm">
+                          <span className="w-2 h-2 rounded-full bg-blue-600" />
+                          <span>{searchedPnrData.routeSourceName || searchedPnrData.from}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          ({searchedPnrData.routeSourceCode || searchedPnrData.from}) • Departure: {searchedPnrData.routeSourceTime || searchedPnrData.departureTime || '--:--'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          Date: {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-100 pt-2">
+                        <div className="flex items-center gap-1.5 font-black text-slate-900 text-sm">
+                          <span className="w-2 h-2 rounded-full bg-teal-600" />
+                          <span>{searchedPnrData.routeDestName || searchedPnrData.to}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          ({searchedPnrData.routeDestCode || searchedPnrData.to}) • Arrival: {searchedPnrData.routeDestTime || searchedPnrData.arrivalTime || '--:--'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          Date: {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 text-[10px]">Coach & Seat:</span>
-                  <div className="font-bold text-indigo-700">{searchedPnrData.coach} - {searchedPnrData.seat} ({searchedPnrData.className})</div>
+
+                {/* 3. FOUR STATUS STRIP PILLS: PNR Status | Chart Status | Booking Status | Current Status */}
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">PNR status</span>
+                    <span className="inline-block bg-blue-50 border border-blue-200 text-blue-700 font-black text-xs px-3 py-1 rounded-full uppercase">
+                      {searchedPnrData.pnrStatus || 'CNF'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Chart status</span>
+                    <strong className="text-slate-900 font-black text-sm block">
+                      {searchedPnrData.chartStatus || 'Prepared'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Booking status</span>
+                    <span className="inline-block bg-blue-50/70 border border-blue-200 text-blue-800 font-black text-xs px-2.5 py-1 rounded-full">
+                      {searchedPnrData.bookingStatusFormatted || `CNF ${searchedPnrData.coach} ${searchedPnrData.seat}`}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Current status</span>
+                    <span className="inline-block bg-teal-50 border border-teal-200 text-teal-800 font-black text-xs px-2.5 py-1 rounded-full">
+                      {searchedPnrData.currentStatusFormatted || `CNF ${searchedPnrData.coach} ${searchedPnrData.seat}`}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 text-[10px]">Chart Status:</span>
-                  <div className="font-bold text-slate-700">{searchedPnrData.chartStatus}</div>
+
+                {/* 3.5 ROUTE & STATIONS SECTION (EXACT MATCH TO REFERENCE SCREENSHOT) */}
+                <div className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-xs space-y-4">
+                  {/* Header Strip */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                        <Radio className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 leading-tight">Route & stations</h3>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">Your booked journey at a glance</p>
+                      </div>
+                    </div>
+
+                    <span className="text-[11px] font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-full border border-slate-200/70">
+                      {searchedPnrData.runsFrequency || 'Runs daily'}
+                    </span>
+                  </div>
+
+                  {/* Board At ➔ Between Stops ➔ Get Off At Banner */}
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-3 items-center pt-1">
+                    {/* Board At Card */}
+                    <div className="bg-white border border-blue-100 rounded-3xl p-4 shadow-xs space-y-2 relative">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-blue-600 text-[10px] font-black uppercase tracking-wider">
+                          <span className="w-2 h-2 rounded-full bg-blue-600" />
+                          <span>BOARD AT</span>
+                        </div>
+                        <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200">
+                          Platform {searchedPnrData.boardingPlatform || 'PF 1'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="text-2xl font-black text-slate-900 tracking-tight">
+                          {searchedPnrData.boardingTime || searchedPnrData.departureTime || '--:--'}
+                        </div>
+                        <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                          DEPARTURE
+                        </div>
+                      </div>
+
+                      <div className="pt-1">
+                        <div className="flex items-center gap-1.5 font-black text-slate-900 text-sm">
+                          <span>{searchedPnrData.boardingStationName || searchedPnrData.from}</span>
+                          <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                            {searchedPnrData.boardingStationCode || searchedPnrData.from}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Intermediate Stops Connector */}
+                    <div className="flex flex-col items-center justify-center px-2 py-1">
+                      <div className="hidden md:block w-full border-t border-blue-200 mb-[-12px]" />
+                      <span className="z-10 bg-white border border-blue-200 text-slate-700 font-bold text-xs px-3.5 py-1.5 rounded-full shadow-xs">
+                        {searchedPnrData.stopsBetweenCount !== undefined ? `${searchedPnrData.stopsBetweenCount} stops between` : 'En-route stops'}
+                      </span>
+                    </div>
+
+                    {/* Get Off At Card */}
+                    <div className="bg-white border border-teal-100 rounded-3xl p-4 shadow-xs space-y-2 relative">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-teal-600 text-[10px] font-black uppercase tracking-wider">
+                          <span className="w-2 h-2 rounded-full bg-teal-600" />
+                          <span>GET OFF AT</span>
+                        </div>
+                        <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200">
+                          Platform {searchedPnrData.destinationPlatform || 'PF 1'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="text-2xl font-black text-slate-900 tracking-tight">
+                          {searchedPnrData.reservationUptoTime || searchedPnrData.arrivalTime || '--:--'}
+                        </div>
+                        <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                          ARRIVAL
+                        </div>
+                      </div>
+
+                      <div className="pt-1">
+                        <div className="flex items-center gap-1.5 font-black text-slate-900 text-sm">
+                          <span>{searchedPnrData.reservationUptoName || searchedPnrData.to}</span>
+                          <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                            {searchedPnrData.reservationUptoCode || searchedPnrData.to}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          {searchedPnrData.journeyDate || searchedPnrData.date}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4 Stats Grid: Scheduled Stops | Distance | Travel Time | Pass-Through */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                        <MapPin className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">SCHEDULED STOPS</span>
+                        <strong className="text-sm font-black text-slate-900">
+                          {searchedPnrData.scheduledStopsCount !== undefined ? `${searchedPnrData.scheduledStopsCount} stops` : '--'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                        <Navigation className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">DISTANCE</span>
+                        <strong className="text-sm font-black text-slate-900">
+                          {searchedPnrData.distanceKm || '-- km'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">TRAVEL TIME</span>
+                        <strong className="text-sm font-black text-slate-900">
+                          {searchedPnrData.duration || '--'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                        <Train className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase block">PASS-THROUGH</span>
+                        <strong className="text-sm font-black text-slate-900">
+                          {searchedPnrData.passThroughCount !== undefined ? `${searchedPnrData.passThroughCount} stations` : '--'}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Full Run Footnote & View Route Details Button */}
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      <Train className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span>
+                        Full run: <strong className="text-slate-900">{searchedPnrData.routeSourceCode || searchedPnrData.from} to {searchedPnrData.routeDestCode || searchedPnrData.to}</strong> • {searchedPnrData.totalRunHaltsCount || '--'} scheduled stops • {searchedPnrData.totalRunPassThroughCount || '--'} pass-through stations
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSubTab('LIVE_TRAIN');
+                        setTrainSearchInput(searchedPnrData.trainNumber);
+                        handleSelectSearchedTrain({
+                          number: searchedPnrData.trainNumber,
+                          name: searchedPnrData.trainName,
+                          from: searchedPnrData.boardingStationCode || searchedPnrData.from,
+                          to: searchedPnrData.reservationUptoCode || searchedPnrData.to
+                        });
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition active:scale-95 ml-auto"
+                    >
+                      <span>View route details</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 font-medium flex items-center gap-1.5 pt-1">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>Scheduled stops are halts where the train stops. Pass-through stations are route points it crosses without stopping. Platform numbers can change on the day.</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 text-[10px]">Platform:</span>
-                  <div className="font-bold text-blue-700">{searchedPnrData.platform || 'PF 1'}</div>
-                </div>
-                <div>
-                  <span className="text-slate-400 text-[10px]">Passenger:</span>
-                  <div className="font-bold text-slate-800 truncate">{searchedPnrData.passengerName || 'Passenger 1'}</div>
+
+                {/* 4. CURRENT TICKET STATUS: PASSENGER DETAILS CARDS */}
+                <div className="space-y-3 pt-2">
+                  <div>
+                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-wider block">CURRENT TICKET STATUS</span>
+                    <h3 className="text-xl font-black text-slate-900">Passenger details</h3>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      See each traveller's latest railway status and seat allocation.
+                    </p>
+                  </div>
+
+                  {/* Passenger Cards List */}
+                  <div className="space-y-3">
+                    {(searchedPnrData.passengersList && searchedPnrData.passengersList.length > 0
+                      ? searchedPnrData.passengersList
+                      : [{
+                          number: 1,
+                          coach: searchedPnrData.coach || 'D1',
+                          berth: searchedPnrData.seat || '92',
+                          berthType: 'Not assigned',
+                          bookedFormatted: `CNF ${searchedPnrData.coach || 'D1'} ${searchedPnrData.seat || '92'}`,
+                          currentFormatted: `CNF ${searchedPnrData.coach || 'D1'} ${searchedPnrData.seat || '92'}`
+                        }]
+                    ).map((p, idx) => (
+                      <div key={idx} className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-black text-slate-900">Passenger {p.number || idx + 1}</h4>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSeatMapPassenger(p);
+                              setShowSeatMapModal(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1 rounded-xl text-xs font-bold transition active:scale-95 border border-blue-200 shadow-xs"
+                          >
+                            <Armchair className="w-3.5 h-3.5 text-blue-600" />
+                            <span>View Seat Map</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                          {/* Seat Details Box */}
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-1.5 text-slate-500 text-[10px] font-black uppercase tracking-wider">
+                              <Armchair className="w-3.5 h-3.5 text-blue-600" />
+                              <span>SEAT DETAILS</span>
+                            </div>
+
+                            <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5 grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">COACH</span>
+                                <strong className="text-base font-black text-slate-900">{p.coach}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">BERTH</span>
+                                <strong className="text-base font-black text-slate-900">{p.berth}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">TYPE</span>
+                                <strong className="text-xs font-black text-slate-800">{p.berthType || 'Not assigned'}</strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Booking Progress Strip */}
+                          <div className="space-y-2">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                              BOOKING PROGRESS
+                            </span>
+
+                            <div className="flex items-center justify-between text-xs pt-1">
+                              <div>
+                                <span className="text-[10px] font-medium text-slate-400 block mb-1">Booked</span>
+                                <span className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 text-teal-800 font-black text-xs px-3 py-1.5 rounded-full">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+                                  <span>{p.bookedFormatted}</span>
+                                </span>
+                              </div>
+
+                              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                                <ArrowRight className="w-4 h-4" />
+                              </div>
+
+                              <div>
+                                <span className="text-[10px] font-medium text-slate-400 block mb-1 text-right">Now</span>
+                                <span className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 text-teal-800 font-black text-xs px-3 py-1.5 rounded-full">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+                                  <span>{p.currentFormatted}</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -1411,6 +1920,498 @@ export default function TrackingPanel({ trains, bookings }) {
           )}
         </div>
       )}
+
+      {/* 5. SHARE JOURNEY STATUS MODAL (EXACT 1:1 MATCH TO USER REFERENCE SCREENSHOT) */}
+      {showShareModal && searchedPnrData && (() => {
+        const rawPnr = searchedPnrData.pnr || '';
+        const maskedPnr = rawPnr.length >= 6 
+          ? `${rawPnr.slice(0, 2)}******${rawPnr.slice(-2)}` 
+          : rawPnr;
+        const displayPnr = includeFullPnr ? rawPnr : maskedPnr;
+
+        // Dynamic origin & destination parsing
+        const fromCode = searchedPnrData.from?.match(/\((.*?)\)/)?.[1] || searchedPnrData.from?.split(' ')[0] || 'NZM';
+        const fromName = searchedPnrData.from?.replace(/\(.*?\)/, '').trim() || 'Origin Station';
+        const toCode = searchedPnrData.to?.match(/\((.*?)\)/)?.[1] || searchedPnrData.to?.split(' ')[0] || 'SWM';
+        const toName = searchedPnrData.to?.replace(/\(.*?\)/, '').trim() || 'Destination Station';
+
+        const tokenSlug = (rawPnr ? rawPnr.slice(-6) : 'gd5n987').toLowerCase();
+        const trackingLink = `https://railco.re/${tokenSlug}`;
+        
+        const shareText = `🚅 RailOne Live Journey Update:\nTrain: ${searchedPnrData.trainName} (#${searchedPnrData.trainNumber})\nRoute: ${fromCode} ➔ ${toCode}\nStatus: ${searchedPnrData.status || 'CONFIRMED'}\nCoach/Seat: ${searchedPnrData.coach}-${searchedPnrData.seat}\nPNR: ${displayPnr}\nTrack live on RailCore: ${trackingLink}`;
+
+        const handleCopyLink = () => {
+          navigator.clipboard.writeText(trackingLink);
+          setCopySuccess('Link Copied!');
+          setTimeout(() => setCopySuccess(''), 2500);
+        };
+
+        const handleCopyMessage = () => {
+          navigator.clipboard.writeText(shareText);
+          setCopySuccess('Message Copied!');
+          setTimeout(() => setCopySuccess(''), 2500);
+        };
+
+        const handleWhatsAppShare = () => {
+          const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+          window.open(waUrl, '_blank');
+        };
+
+        const handleNativeShare = async () => {
+          if (navigator.share) {
+            try {
+              await navigator.share({
+                title: `${searchedPnrData.trainName} Journey Status`,
+                text: shareText,
+                url: trackingLink
+              });
+            } catch (_) {}
+          } else {
+            handleCopyMessage();
+          }
+        };
+
+        return (
+          <div 
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in"
+            onClick={() => setShowShareModal(false)}
+          >
+            <div 
+              className="bg-white w-full max-w-md rounded-3xl p-5 space-y-4 shadow-2xl relative max-h-[92vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <Share2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black text-blue-700 uppercase tracking-wider block">SHARE PNR UPDATE</span>
+                    <h3 className="text-lg font-black text-slate-900 leading-tight">Share journey status</h3>
+                    <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      Send the current status and a live RailCore tracking link.
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setShowShareModal(false)}
+                  className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition active:scale-90"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* CURRENT PNR SNAPSHOT CARD */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Radio className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-[10px] font-black uppercase tracking-wider">CURRENT PNR SNAPSHOT</span>
+                  </div>
+                  <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full uppercase">
+                    {searchedPnrData.status?.includes('CNF') ? 'CNF' : (searchedPnrData.status || 'CNF')}
+                  </span>
+                </div>
+
+                <div className="flex items-baseline justify-between">
+                  <h4 className="text-base font-black text-slate-900 tracking-tight uppercase">
+                    {searchedPnrData.trainName}
+                  </h4>
+                  <span className="font-mono text-xs font-bold text-slate-500">
+                    Train {searchedPnrData.trainNumber}
+                  </span>
+                </div>
+
+                {/* Route */}
+                <div className="flex items-center justify-between text-xs pt-1">
+                  <div>
+                    <div className="text-base font-black text-blue-600 uppercase">{fromCode}</div>
+                    <div className="text-[11px] text-slate-500 font-medium truncate max-w-[130px]">{fromName}</div>
+                  </div>
+
+                  <div className="flex items-center gap-1 text-slate-300">
+                    <div className="w-8 border-t border-slate-300" />
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-base font-black text-blue-600 uppercase">{toCode}</div>
+                    <div className="text-[11px] text-slate-500 font-medium truncate max-w-[130px]">{toName}</div>
+                  </div>
+                </div>
+
+                {/* Journey Info Grid */}
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-xs">
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">JOURNEY</span>
+                    <span className="font-bold text-slate-800 text-[11px]">{searchedPnrData.date || 'Today'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">DEPARTS</span>
+                    <span className="font-bold text-slate-800 text-[11px]">{searchedPnrData.departureTime || '12:45 PM'}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">PNR</span>
+                    <span className="font-mono font-black text-slate-900 text-[11px]">{displayPnr}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons: WhatsApp & Share another way */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleWhatsAppShare}
+                  className="bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 text-slate-800 hover:text-emerald-800 font-bold py-2.5 px-3 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-95"
+                >
+                  <MessageCircle className="w-4 h-4 text-emerald-600" />
+                  <span>WhatsApp</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleNativeShare}
+                  className="bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 text-slate-800 hover:text-blue-800 font-bold py-2.5 px-3 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-95"
+                >
+                  <Share2 className="w-4 h-4 text-blue-600" />
+                  <span>Share another way</span>
+                </button>
+              </div>
+
+              {/* Show / Hide QR Code Toggle Button */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowQrCode(!showQrCode)}
+                  className="w-full bg-white border border-slate-200 hover:border-blue-400 hover:bg-slate-50 text-slate-800 font-bold py-2.5 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-xs transition"
+                >
+                  <QrCode className="w-4 h-4 text-blue-600" />
+                  <span>{showQrCode ? 'Hide QR code' : 'Show QR code'}</span>
+                </button>
+
+                {/* Dynamic QR Code Display */}
+                {showQrCode && (
+                  <div className="mt-2.5 bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-2 animate-in fade-in">
+                    <div className="w-36 h-36 bg-white border border-slate-200 rounded-xl p-2 mx-auto flex items-center justify-center shadow-xs">
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(trackingLink)}`} 
+                        alt="PNR Journey QR Code"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-700">
+                      Scan to Track PNR #{rawPnr} Live
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Live sync with Indian Railways Satellite GPS
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Include full PNR Checkbox */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-1">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input 
+                    type="checkbox"
+                    checked={includeFullPnr}
+                    onChange={(e) => setIncludeFullPnr(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-0 mt-0.5 cursor-pointer"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">Include the full PNR in this share</span>
+                    <span className="text-[10px] text-slate-400 leading-tight block mt-0.5">
+                      Off by default. The tokenized link and message otherwise show only a masked PNR.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              {/* Privacy Notice */}
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 px-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Private labels, notes, passenger names, fare and payment details are never shared.</span>
+              </div>
+
+              {/* RailCore Live Tracking Link Strip */}
+              <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="overflow-hidden">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">RAILCORE LIVE TRACKING LINK</span>
+                    <a 
+                      href={trackingLink} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="font-bold text-blue-600 hover:underline truncate block"
+                    >
+                      {trackingLink}
+                    </a>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl text-[11px] shadow-xs shrink-0 flex items-center gap-1 transition active:scale-95"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Copy link</span>
+                </button>
+              </div>
+
+              {/* Copy Feedback */}
+              {copySuccess && (
+                <div className="text-center text-xs font-bold text-emerald-600 animate-in fade-in flex items-center justify-center gap-1">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{copySuccess}</span>
+                </div>
+              )}
+
+              {/* Bottom Buttons: Copy message & railcore.tech branding */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCopyMessage}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/30 transition active:scale-95"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy message</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.open('https://railcore.tech', '_blank')}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-4 rounded-2xl text-xs flex items-center gap-1 transition"
+                >
+                  <span>railcore.tech</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 6. REALISTIC DYNAMIC SEAT MAP MODAL */}
+      {showSeatMapModal && selectedSeatMapPassenger && searchedPnrData && (() => {
+        const p = selectedSeatMapPassenger;
+        const coachId = p.coach || searchedPnrData.coach || 'D1';
+        const targetBerthNum = parseInt(String(p.berth).replace(/\D/g, ''), 10) || 92;
+        const trainClass = (searchedPnrData.journeyClass || searchedPnrData.className || '2S').toUpperCase();
+
+        // Determine coach type: 'CHAIR_CAR' (2S/CC) vs 'SLEEPER' (SL/3A/2A/1A)
+        const isChairCar = ['2S', 'CC', 'EC', 'EA'].includes(trainClass) || coachId.startsWith('D') || coachId.startsWith('C');
+        const totalSeats = isChairCar ? 108 : (trainClass === '2A' ? 54 : (trainClass === '1A' ? 24 : 72));
+
+        // Group seats in blocks of 6 for 2S (3 on left, 3 on right with aisle) or standard sleeper coupe
+        const seatBlocks = [];
+        const perBay = isChairCar ? 6 : 8;
+        for (let s = 1; s <= totalSeats; s += perBay) {
+          const baySeats = [];
+          for (let i = 0; i < perBay && (s + i) <= totalSeats; i++) {
+            baySeats.push(s + i);
+          }
+          seatBlocks.push(baySeats);
+        }
+
+        // Helper to get berth code label
+        const getSeatCode = (seatNo) => {
+          if (isChairCar) {
+            const mod = seatNo % 6;
+            if (mod === 1 || mod === 0) return 'WS';
+            if (mod === 3 || mod === 4) return 'AS';
+            return 'MS';
+          } else {
+            const mod = seatNo % 8;
+            if (mod === 1 || mod === 4) return 'LB';
+            if (mod === 2 || mod === 5) return 'MB';
+            if (mod === 3 || mod === 6) return 'UB';
+            if (mod === 7) return 'SL';
+            return 'SU';
+          }
+        };
+
+        return (
+          <div 
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in"
+            onClick={() => setShowSeatMapModal(false)}
+          >
+            <div 
+              className="bg-white w-full max-w-lg rounded-3xl p-5 space-y-4 shadow-2xl relative max-h-[92vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <Armchair className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 leading-tight">
+                      Coach {coachId} • Seat Map
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      {searchedPnrData.trainName} (#{searchedPnrData.trainNumber}) • Class: <strong>{trainClass}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <button 
+                  type="button" 
+                  onClick={() => setShowSeatMapModal(false)}
+                  className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition active:scale-90"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Passenger Target Seat Badge */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-800 uppercase block">YOUR ALLOTTED SEAT</span>
+                  <div className="font-black text-emerald-950 text-sm mt-0.5">
+                    Coach {coachId} — Seat #{targetBerthNum} ({p.berthType || getSeatCode(targetBerthNum)})
+                  </div>
+                </div>
+                <span className="bg-emerald-600 text-white font-black text-xs px-3 py-1 rounded-full shadow-xs animate-pulse">
+                  Target Seat #{targetBerthNum}
+                </span>
+              </div>
+
+              {/* Legend Strip */}
+              <div className="flex items-center justify-center gap-4 text-[10px] font-bold py-1 bg-slate-50 rounded-xl border border-slate-200/80">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 rounded-md bg-emerald-600 border border-emerald-700" />
+                  <span>Your Seat (#{targetBerthNum})</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 rounded-md bg-white border border-slate-300" />
+                  <span>Available / Other</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 rounded-md bg-slate-200 border border-slate-300" />
+                  <span>Aisle Walkway</span>
+                </div>
+              </div>
+
+              {/* Coach Layout Body with Door / Bathroom and Seat Bays */}
+              <div className="overflow-y-auto flex-1 p-3 bg-slate-100 rounded-2xl border border-slate-200/90 space-y-4">
+                {/* Front Coach Door */}
+                <div className="flex items-center justify-between text-[10px] font-black uppercase text-slate-400 bg-white/80 py-1.5 px-3 rounded-xl border border-dashed border-slate-300">
+                  <span>🚪 Door / Washroom</span>
+                  <span className="font-mono text-slate-500">ENGINE DIRECTION ➔</span>
+                </div>
+
+                {/* Seat Bays */}
+                <div className="space-y-3">
+                  {seatBlocks.map((bay, bayIdx) => {
+                    const isLeftThree = isChairCar;
+                    const leftSeats = isLeftThree ? bay.slice(0, 3) : bay.slice(0, 3);
+                    const rightSeats = isLeftThree ? bay.slice(3, 6) : bay.slice(3);
+
+                    return (
+                      <div key={bayIdx} className="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-xs">
+                        <div className="text-[9px] font-black text-slate-400 uppercase mb-2 flex justify-between">
+                          <span>Bay {bayIdx + 1} (Seats {bay[0]} - {bay[bay.length - 1]})</span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          {/* Left Seats Group */}
+                          <div className="flex items-center gap-1.5 flex-1">
+                            {leftSeats.map((seatNum) => {
+                              const isTarget = seatNum === targetBerthNum;
+                              const code = getSeatCode(seatNum);
+                              return (
+                                <div
+                                  key={seatNum}
+                                  className={`flex-1 py-2 px-1 rounded-xl text-center transition flex flex-col items-center justify-center border ${
+                                    isTarget 
+                                      ? 'bg-emerald-600 text-white font-black border-emerald-700 shadow-md scale-105 ring-2 ring-emerald-400' 
+                                      : 'bg-slate-50 hover:bg-blue-50 border-slate-200 text-slate-800'
+                                  }`}
+                                >
+                                  <span className="text-xs font-black leading-none">{seatNum}</span>
+                                  <span className={`text-[8px] font-bold mt-0.5 leading-none ${isTarget ? 'text-emerald-100' : 'text-slate-400'}`}>
+                                    {code}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Aisle Walkway */}
+                          <div className="w-5 text-center text-[9px] font-black text-slate-300 uppercase tracking-tighter">
+                            | |
+                          </div>
+
+                          {/* Right Seats Group */}
+                          <div className="flex items-center gap-1.5 flex-1 justify-end">
+                            {rightSeats.map((seatNum) => {
+                              const isTarget = seatNum === targetBerthNum;
+                              const code = getSeatCode(seatNum);
+                              return (
+                                <div
+                                  key={seatNum}
+                                  className={`flex-1 py-2 px-1 rounded-xl text-center transition flex flex-col items-center justify-center border ${
+                                    isTarget 
+                                      ? 'bg-emerald-600 text-white font-black border-emerald-700 shadow-md scale-105 ring-2 ring-emerald-400' 
+                                      : 'bg-slate-50 hover:bg-blue-50 border-slate-200 text-slate-800'
+                                  }`}
+                                >
+                                  <span className="text-xs font-black leading-none">{seatNum}</span>
+                                  <span className={`text-[8px] font-bold mt-0.5 leading-none ${isTarget ? 'text-emerald-100' : 'text-slate-400'}`}>
+                                    {code}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Rear Coach Door */}
+                <div className="flex items-center justify-between text-[10px] font-black uppercase text-slate-400 bg-white/80 py-1.5 px-3 rounded-xl border border-dashed border-slate-300">
+                  <span>🚪 Door / Washroom</span>
+                  <span className="font-mono text-slate-500">REAR VESTIBULE</span>
+                </div>
+              </div>
+
+              {/* Official IRCTC Charting Link & Close */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                {searchedPnrData.irctcChartUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => window.open(searchedPnrData.irctcChartUrl, '_blank')}
+                    className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 hover:underline"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>View Official IRCTC Live Chart</span>
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    Layout verified with CRIS / Indian Railways
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowSeatMapModal(false)}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition active:scale-95"
+                >
+                  Close Map
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

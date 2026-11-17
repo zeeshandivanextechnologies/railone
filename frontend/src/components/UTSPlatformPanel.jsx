@@ -30,7 +30,8 @@ export default function UTSPlatformPanel({
   setWalletBalance,
   onBookSuccess, 
   onOpenTicketModal,
-  onOpenAuth 
+  onOpenAuth,
+  onUpdateUser 
 }) {
   const [ticketCategory, setTicketCategory] = useState('JOURNEY'); // JOURNEY (Unreserved) | PLATFORM | SEASON
   const [ticketSubtype, setTicketSubtype] = useState('PAPERLESS'); // PAPERLESS (Show on Phone) | PAPER (Print at Kiosk)
@@ -42,10 +43,17 @@ export default function UTSPlatformPanel({
 
   // Station picker modal state
   const [selectingStationType, setSelectingStationType] = useState(null); // 'FROM' | 'TO' | 'PLATFORM' | null
-  const [stationList, setStationList] = useState([]);
+  const [stationList, setStationList] = useState(stations && stations.length > 0 ? stations : []);
   const [stationSearchFilter, setStationSearchFilter] = useState('');
   const [selectedLetter, setSelectedLetter] = useState('ALL');
   const [loadingStations, setLoadingStations] = useState(false);
+
+  // Sync stationList when parent stations prop updates
+  useEffect(() => {
+    if (stations && stations.length > 0 && stationList.length === 0) {
+      setStationList(stations);
+    }
+  }, [stations]);
 
   // Form selections
   const [passengerCount, setPassengerCount] = useState(1);
@@ -60,6 +68,10 @@ export default function UTSPlatformPanel({
   const [seasonDuration, setSeasonDuration] = useState('MONTHLY'); // MONTHLY | QUARTERLY
   const [seasonClass, setSeasonClass] = useState('SECOND'); // SECOND | FIRST
 
+  // Dynamic Fare & Route state from API
+  const [apiFareData, setApiFareData] = useState(null);
+  const [loadingFare, setLoadingFare] = useState(false);
+
   const [lastGeneratedTicket, setLastGeneratedTicket] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -68,6 +80,38 @@ export default function UTSPlatformPanel({
   useEffect(() => {
     fetchStations();
   }, []);
+
+  // Fetch dynamic fare directly from Railway UTS Fare API whenever selections change
+  useEffect(() => {
+    const fetchDynamicFare = async () => {
+      setLoadingFare(true);
+      try {
+        const params = new URLSearchParams({
+          category: ticketCategory,
+          from: fromStation?.code || 'NDLS',
+          to: toStation?.code || 'CNB',
+          platformStation: platformStation?.code || 'NDLS',
+          trainType: trainType,
+          passengerCount: ticketCategory === 'PLATFORM' ? platformPersons : passengerCount,
+          duration: seasonDuration,
+          seasonClass: seasonClass
+        });
+        const res = await fetch(`${API_BASE}/trains/uts/fare?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            setApiFareData(data);
+          }
+        }
+      } catch (err) {
+        console.warn('Fare API warning:', err.message);
+      } finally {
+        setLoadingFare(false);
+      }
+    };
+
+    fetchDynamicFare();
+  }, [ticketCategory, fromStation?.code, toStation?.code, platformStation?.code, trainType, passengerCount, platformPersons, seasonDuration, seasonClass]);
 
   const fetchStations = async (query = '', letter = 'ALL') => {
     setLoadingStations(true);
@@ -133,8 +177,11 @@ export default function UTSPlatformPanel({
     setToStation(temp);
   };
 
-  // Fare calculations
+  // Fare calculations: Uses dynamic fare from API with fallback
   const calculateFare = () => {
+    if (apiFareData && typeof apiFareData.totalFare === 'number') {
+      return apiFareData.totalFare;
+    }
     if (ticketCategory === 'PLATFORM') {
       return platformPersons * 10;
     }
@@ -173,27 +220,37 @@ export default function UTSPlatformPanel({
     const originCode = isPlatform ? platformStation.code : fromStation.code;
     const destCode = isPlatform ? platformStation.code : toStation.code;
 
+    // Use API validity & coach descriptions
+    const seasonValidityLabel = apiFareData?.validity || (seasonDuration === 'QUARTERLY' ? '90 Days Validity' : '30 Days Validity');
+    const seasonValidUntil = apiFareData?.validUntil || new Date(Date.now() + (seasonDuration === 'QUARTERLY' ? 90 : 30) * 24 * 3600 * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
     const newTicket = {
       pnr: randomPnr,
       ticketType: isPlatform ? 'PLATFORM' : (isSeason ? 'SEASON' : 'UTS'),
       from: originCode,
       to: destCode,
       trainNumber: isPlatform ? 'PLATFORM-PASS' : (isSeason ? 'SUBURBAN-PASS' : 'ALL-UNRESERVED'),
-      trainName: isPlatform ? `Platform Pass (${platformStation.name})` : (isSeason ? `Monthly Suburban Pass (${fromStation.code}-${toStation.code})` : `General Second Class (${trainType})`),
+      trainName: isPlatform 
+        ? `Platform Pass (${platformStation.name})` 
+        : (isSeason 
+            ? `${seasonDuration === 'QUARTERLY' ? 'Quarterly' : 'Monthly'} Suburban Pass (${fromStation.code}-${toStation.code})` 
+            : `General Second Class (${trainType})`),
       date: 'Valid Today',
       departureTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      arrivalTime: isPlatform ? '+2 Hours' : (isSeason ? '30 Days Validity' : 'Same Day Midnight'),
+      arrivalTime: isPlatform ? '+2 Hours' : (isSeason ? seasonValidityLabel : 'Same Day Midnight'),
       coach: isPlatform ? 'Platform Entry' : (isSeason ? (seasonClass === 'FIRST' ? 'First Class FC' : 'General II') : 'General GS/II'),
-      seat: isPlatform ? `${platformPersons} Person(s)` : `${passengerCount} Seat(s) Unreserved`,
-      className: isPlatform ? 'PLATFORM' : (isSeason ? seasonClass : 'GEN / II'),
-      quota: 'GENERAL',
+      seat: isPlatform ? `${platformPersons} Person(s)` : (isSeason ? 'Pass Holder (Unreserved)' : `${passengerCount} Seat(s) Unreserved`),
+      className: isPlatform ? 'PLATFORM' : (isSeason ? (seasonClass === 'FIRST' ? 'First Class (FC)' : 'Second Class (II)') : 'GEN / II'),
+      quota: isSeason ? 'SEASON' : 'GENERAL',
       status: 'ACTIVE & VALID',
       platform: 'Any Platform',
-      passengerName: user ? user.name : (isPlatform ? `${platformPersons} Person(s)` : `${passengerCount} Passenger(s)`),
+      passengerName: user ? user.name : (isPlatform ? `${platformPersons} Person(s)` : (isSeason ? 'Pass Holder' : `${passengerCount} Passenger(s)`)),
       fare: payableAmount,
       bookingDate: 'Just now',
       isPaperless: ticketSubtype === 'PAPERLESS',
-      validUntil: new Date(Date.now() + (isPlatform ? 2 : 12) * 3600 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      validUntil: isPlatform 
+        ? new Date(Date.now() + 2 * 3600 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        : (isSeason ? seasonValidUntil : 'Today Midnight'),
       userId: user?.id || null
     };
 
@@ -205,15 +262,23 @@ export default function UTSPlatformPanel({
         body: JSON.stringify(newTicket)
       });
 
-      // 2. Deduct fare from R-Wallet if paid via wallet
+      // 2. Deduct fare from R-Wallet if paid via wallet & log in passbook ledger
       if (paymentMode === 'R_WALLET' && setWalletBalance) {
         const nextBalance = Math.max(0, walletBalance - payableAmount);
         setWalletBalance(nextBalance);
         if (user && user.id) {
-          await fetch(`${API_BASE}/profile/${user.id}`, {
-            method: 'PUT',
+          if (onUpdateUser) {
+            onUpdateUser({ ...user, wallet: nextBalance });
+          }
+          await fetch(`${API_BASE}/wallet/debit`, {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ walletBalance: nextBalance })
+            body: JSON.stringify({ 
+              userId: user.id, 
+              amount: payableAmount, 
+              pnr: newTicket.utsNumber || newTicket.ticketNo,
+              title: `${newTicket.ticketType || 'UTS'} Ticket (${newTicket.sourceCode || newTicket.sourceStation || ''} to ${newTicket.destCode || newTicket.destinationStation || 'PF'})` 
+            })
           }).catch(() => {});
         }
       }
@@ -397,10 +462,10 @@ export default function UTSPlatformPanel({
                     onChange={(e) => setPlatformPersons(parseInt(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none mt-1"
                   >
-                    <option value={1}>1 Person (₹10)</option>
-                    <option value={2}>2 Persons (₹20)</option>
-                    <option value={3}>3 Persons (₹30)</option>
-                    <option value={4}>4 Persons (₹40)</option>
+                    <option value={1}>1 Person</option>
+                    <option value={2}>2 Persons</option>
+                    <option value={3}>3 Persons</option>
+                    <option value={4}>4 Persons</option>
                   </select>
                 </div>
                 <div>
@@ -446,30 +511,81 @@ export default function UTSPlatformPanel({
                 </div>
               </div>
 
+              {/* Train Type Selection for MST (Passenger / Mail Exp / Superfast) */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Train Type Allowed</label>
+                <select 
+                  value={trainType}
+                  onChange={(e) => setTrainType(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none mt-1"
+                >
+                  {apiFareData?.availableTrainTypes && apiFareData.availableTrainTypes.length > 0 ? (
+                    apiFareData.availableTrainTypes.map(tt => (
+                      <option key={tt.code} value={tt.code}>
+                        {tt.label}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="ORDINARY">Ordinary / Passenger Trains</option>
+                      <option value="MAIL_EXP">Mail / Express Trains</option>
+                      <option value="SUPERFAST">Superfast Express Trains (+₹45 SF Levy)</option>
+                    </>
+                  )}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Duration</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Pass Duration</label>
                   <select 
                     value={seasonDuration}
                     onChange={(e) => setSeasonDuration(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none mt-1"
                   >
-                    <option value="MONTHLY">Monthly (1 Month)</option>
-                    <option value="QUARTERLY">Quarterly (3 Months)</option>
+                    {apiFareData?.availableDurations && apiFareData.availableDurations.length > 0 ? (
+                      apiFareData.availableDurations.map(dur => (
+                        <option key={dur.code} value={dur.code}>
+                          {dur.label}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="MONTHLY">Monthly Pass (MST - 30 Days)</option>
+                        <option value="QUARTERLY">Quarterly Pass (QST - 90 Days)</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Class</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Travel Class</label>
                   <select 
                     value={seasonClass}
                     onChange={(e) => setSeasonClass(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none mt-1"
                   >
-                    <option value="SECOND">Second Class (II)</option>
-                    <option value="FIRST">First Class (FC)</option>
+                    <option value="SECOND">Second Class (II / GS - Daily MST)</option>
                   </select>
                 </div>
               </div>
+
+              {/* Dynamic Season Pass Details Banner from API */}
+              {apiFareData && ticketCategory === 'SEASON' && (
+                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-2.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                    <div>
+                      <span className="text-[10px] font-bold text-emerald-800 block">Pass Validity:</span>
+                      <span className="font-bold text-emerald-900 text-[11px]">{apiFareData.validity || `${apiFareData.validityDays} Days`}</span>
+                    </div>
+                  </div>
+                  {apiFareData.distanceKm && (
+                    <span className="text-[10px] font-bold bg-white text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-200 shadow-2xs">
+                      {apiFareData.distanceKm} km Suburban
+                    </span>
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -507,9 +623,18 @@ export default function UTSPlatformPanel({
           {/* Fare Summary & Button */}
           <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-slate-500 font-semibold">Total Fare:</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-500 font-semibold">Total Fare:</span>
+                {apiFareData?.distanceKm && ticketCategory !== 'PLATFORM' && (
+                  <span className="text-[9px] font-bold text-slate-400 bg-slate-200/60 px-1.5 py-0.2 rounded">
+                    {apiFareData.distanceKm} km
+                  </span>
+                )}
+              </div>
               <div className="flex items-baseline space-x-1.5">
-                <span className="text-base font-black text-slate-900">₹{payableAmount}</span>
+                <span className="text-base font-black text-slate-900">
+                  {loadingFare ? '...' : `₹${payableAmount}`}
+                </span>
                 {rWalletDiscount > 0 && (
                   <span className="text-[10px] text-emerald-600 font-bold">Saved ₹{rWalletDiscount}</span>
                 )}

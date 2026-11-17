@@ -216,15 +216,17 @@ export default function MyTripsPanel({ bookings = [], user, onOpenTicketModal, o
                     <span>View QR</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => window.open(`http://localhost:5000/api/bookings/${encodeURIComponent(ticket.pnr)}/download-pdf`, '_blank')}
-                    title="Download Official IRCTC E-Ticket PDF"
-                    className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition active:scale-95"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>PDF</span>
-                  </button>
+                  {!isUts && !isPlatform && (
+                    <button
+                      type="button"
+                      onClick={() => window.open(`http://localhost:5000/api/bookings/${encodeURIComponent(ticket.pnr)}/download-pdf`, '_blank')}
+                      title="Download Official IRCTC E-Ticket PDF"
+                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1 transition active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>PDF</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={() => handleCancelTicket(ticket)}

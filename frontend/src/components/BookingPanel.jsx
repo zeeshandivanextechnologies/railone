@@ -26,13 +26,16 @@ import {
   Plus,
   Trash2,
   ChevronDown,
-  Info
+  Info,
+  Check
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { passengerApi } from '../services/passengerApi';
 
 const API_BASE = 'http://localhost:5000/api';
 
 export default function BookingPanel({ 
+  stations = [],
   user, 
   walletBalance, 
   setWalletBalance, 
@@ -40,7 +43,8 @@ export default function BookingPanel({
   onOpenAuth,
   initialFromStation,
   initialToStation,
-  onStationsChange
+  onStationsChange,
+  onUpdateUser
 }) {
   const [ticketMode, setTicketMode] = useState('RESERVED'); // RESERVED | UTS | PLATFORM
   const [fromStation, setFromStation] = useState(initialFromStation || { code: 'NDLS', name: 'New Delhi' });
@@ -77,10 +81,17 @@ export default function BookingPanel({
 
   // Dynamic Station Selector Sheet state
   const [selectingStationType, setSelectingStationType] = useState(null); // 'FROM' | 'TO' | null
-  const [stationList, setStationList] = useState([]);
+  const [stationList, setStationList] = useState(stations && stations.length > 0 ? stations : []);
   const [stationSearchFilter, setStationSearchFilter] = useState('');
   const [selectedLetter, setSelectedLetter] = useState('ALL');
   const [loadingStations, setLoadingStations] = useState(false);
+
+  // Sync stationList when parent stations change
+  useEffect(() => {
+    if (stations && stations.length > 0 && stationList.length === 0) {
+      setStationList(stations);
+    }
+  }, [stations]);
 
   // Multi-Step Reservation Flow: 'SEARCH' | 'PASSENGER_FORM' | 'REVIEW_JOURNEY'
   const [bookingStep, setBookingStep] = useState('SEARCH');
@@ -100,13 +111,50 @@ export default function BookingPanel({
   ]);
   const [showAddPassengerModal, setShowAddPassengerModal] = useState(false);
   const [showExistingPassengerModal, setShowExistingPassengerModal] = useState(false);
+  const [editingPassengerId, setEditingPassengerId] = useState(null);
   const [newPName, setNewPName] = useState('');
   const [newPAge, setNewPAge] = useState('');
   const [newPGender, setNewPGender] = useState('M');
   const [newPBerth, setNewPBerth] = useState('No Preference');
 
-  // Boarding Station state
+  // Boarding Station state & dynamic halts from API
   const [selectedBoardingStation, setSelectedBoardingStation] = useState('');
+  const [showBoardingModal, setShowBoardingModal] = useState(false);
+  const [boardingHalts, setBoardingHalts] = useState([]);
+  const [loadingHalts, setLoadingHalts] = useState(false);
+
+  // Fetch intermediate halts whenever selectedTrain changes or when modal is opened
+  const fetchHaltsForSelectedTrain = async () => {
+    if (!selectedTrain?.number) return;
+    setLoadingHalts(true);
+    try {
+      const halts = await passengerApi.getTrainHalts(selectedTrain.number);
+      if (halts && halts.length > 0) {
+        setBoardingHalts(halts);
+      } else {
+        setBoardingHalts([
+          { code: selectedTrain.from, name: selectedTrain.fromName || selectedTrain.from, arrival: selectedTrain.departure, departure: selectedTrain.departure, sequence: 1 },
+          { code: selectedTrain.to, name: selectedTrain.toName || selectedTrain.to, arrival: selectedTrain.arrival, departure: selectedTrain.arrival, sequence: 2 }
+        ]);
+      }
+    } catch (e) {
+      console.warn('Error fetching halts:', e);
+      setBoardingHalts([
+        { code: selectedTrain.from, name: selectedTrain.fromName || selectedTrain.from, arrival: selectedTrain.departure, departure: selectedTrain.departure, sequence: 1 },
+        { code: selectedTrain.to, name: selectedTrain.toName || selectedTrain.to, arrival: selectedTrain.arrival, departure: selectedTrain.arrival, sequence: 2 }
+      ]);
+    } finally {
+      setLoadingHalts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedTrain?.number) {
+      fetchHaltsForSelectedTrain();
+    } else {
+      setBoardingHalts([]);
+    }
+  }, [selectedTrain?.number]);
 
   // Contact Details (from logged in user or customizable)
   const [contactMobile, setContactMobile] = useState(user?.mobile || '+918290818632');
@@ -118,8 +166,45 @@ export default function BookingPanel({
   const [confirmBerthsOnly, setConfirmBerthsOnly] = useState(false);
   const [preferredCoach, setPreferredCoach] = useState('');
   const [reservationChoice, setReservationChoice] = useState('None');
+  const [showReservationChoiceModal, setShowReservationChoiceModal] = useState(false);
   const [travelInsurance, setTravelInsurance] = useState(true); // default checked from screenshot
   const [gstinOptional, setGstinOptional] = useState('');
+
+  // Dynamic UTS & Platform Fare from API
+  const [dynamicUtsFare, setDynamicUtsFare] = useState(null);
+  const [loadingUtsFare, setLoadingUtsFare] = useState(false);
+  const [utsTrainType, setUtsTrainType] = useState('ORDINARY'); // ORDINARY | MAIL_EXP | SUPERFAST
+
+  // Fetch live UTS & Platform fare from API whenever route, trainType or passenger count changes
+  useEffect(() => {
+    if (ticketMode === 'UTS' || ticketMode === 'PLATFORM') {
+      const fetchUtsFare = async () => {
+        setLoadingUtsFare(true);
+        try {
+          const params = new URLSearchParams({
+            category: ticketMode === 'PLATFORM' ? 'PLATFORM' : 'JOURNEY',
+            from: fromStation.code,
+            to: ticketMode === 'PLATFORM' ? fromStation.code : toStation.code,
+            platformStation: fromStation.code,
+            trainType: utsTrainType,
+            passengerCount: passengers.length || 1
+          });
+          const res = await fetch(`${API_BASE}/trains/uts/fare?${params.toString()}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success) {
+              setDynamicUtsFare(data);
+            }
+          }
+        } catch (e) {
+          console.warn('Error fetching dynamic UTS fare:', e);
+        } finally {
+          setLoadingUtsFare(false);
+        }
+      };
+      fetchUtsFare();
+    }
+  }, [ticketMode, fromStation.code, toStation.code, utsTrainType, passengers.length]);
 
   // Legacy single passenger state for compatibility
   const [passengerName, setPassengerName] = useState(user ? (user.name || user.fullName) : 'ZEESHAN');
@@ -185,11 +270,11 @@ export default function BookingPanel({
 
   useEffect(() => {
     if (fromStation?.code && toStation?.code) {
-      fetchTrains(fromStation.code, toStation.code, '', journeyDate);
+      fetchTrains(fromStation.code, toStation.code, '', journeyDate, selectedQuota);
     } else {
-      fetchTrains('', '', '', journeyDate);
+      fetchTrains('', '', '', journeyDate, selectedQuota);
     }
-  }, [fromStation, toStation, journeyDate]);
+  }, [fromStation, toStation, journeyDate, selectedQuota]);
 
   // Fetch master passengers if user is logged in
   useEffect(() => {
@@ -205,7 +290,7 @@ export default function BookingPanel({
     }
   }, [user]);
 
-  const fetchTrains = async (from = '', to = '', searchQuery = '', travelDate = '') => {
+  const fetchTrains = async (from = '', to = '', searchQuery = '', travelDate = '', quota = 'GENERAL') => {
     setLoadingTrains(true);
     try {
       let url = `${API_BASE}/trains`;
@@ -218,6 +303,9 @@ export default function BookingPanel({
       }
       if (travelDate) {
         params.append('date', travelDate);
+      }
+      if (quota) {
+        params.append('quota', quota);
       }
       if (params.toString()) {
         url += `?${params.toString()}`;
@@ -311,23 +399,61 @@ export default function BookingPanel({
     setBookingStep('PASSENGER_FORM');
   };
 
-  // Add new passenger to list
+  // Add or Update passenger
   const handleAddNewPassengerSubmit = (e) => {
     e.preventDefault();
     if (!newPName.trim() || !newPAge) return;
-    const newP = {
-      id: `p-${Date.now()}`,
-      name: newPName.trim().toUpperCase(),
-      age: newPAge.trim(),
-      gender: newPGender,
-      berth: newPBerth
-    };
-    setPassengers(prev => [...prev, newP]);
+    
+    if (editingPassengerId) {
+      // Update existing passenger details
+      setPassengers(prev => prev.map(p => {
+        if (p.id === editingPassengerId) {
+          return {
+            ...p,
+            name: newPName.trim().toUpperCase(),
+            age: newPAge.trim(),
+            gender: newPGender,
+            berth: newPBerth
+          };
+        }
+        return p;
+      }));
+    } else {
+      // Add new passenger
+      const newP = {
+        id: `p-${Date.now()}`,
+        name: newPName.trim().toUpperCase(),
+        age: newPAge.trim(),
+        gender: newPGender,
+        berth: newPBerth
+      };
+      setPassengers(prev => [...prev, newP]);
+    }
+
+    setEditingPassengerId(null);
     setNewPName('');
     setNewPAge('');
     setNewPGender('M');
     setNewPBerth('No Preference');
     setShowAddPassengerModal(false);
+  };
+
+  const handleEditPassenger = (p) => {
+    setEditingPassengerId(p.id);
+    setNewPName(p.name);
+    setNewPAge(p.age);
+    setNewPGender(p.gender || 'M');
+    setNewPBerth(p.berth || 'No Preference');
+    setShowAddPassengerModal(true);
+  };
+
+  const handleOpenAddPassengerModal = () => {
+    setEditingPassengerId(null);
+    setNewPName('');
+    setNewPAge('');
+    setNewPGender('M');
+    setNewPBerth('No Preference');
+    setShowAddPassengerModal(true);
   };
 
   const handleRemovePassenger = (id) => {
@@ -388,9 +514,13 @@ export default function BookingPanel({
 
     const perPersonFare = selectedClass 
       ? selectedClass.fare 
-      : (ticketMode === 'PLATFORM' ? 10 : 45);
+      : (dynamicUtsFare?.unitFare 
+          ? dynamicUtsFare.unitFare 
+          : (ticketMode === 'PLATFORM' ? 10 : 35));
     const insuranceFee = travelInsurance ? (passengers.length * 0.45) : 0;
-    const fareAmount = (perPersonFare * passengers.length) + insuranceFee;
+    const fareAmount = (dynamicUtsFare?.totalFare && !selectedClass)
+      ? (dynamicUtsFare.totalFare + insuranceFee)
+      : ((perPersonFare * passengers.length) + insuranceFee);
 
     // Check R-Wallet balance
     if (walletBalance !== undefined && walletBalance < fareAmount) {
@@ -405,30 +535,32 @@ export default function BookingPanel({
     const primaryPassenger = passengers[0];
     const newBooking = {
       pnr: randomPnr,
-      trainNumber: selectedTrain ? selectedTrain.number : "12919",
-      trainName: selectedTrain ? selectedTrain.name : "Malwa SF Express",
+      trainNumber: selectedTrain ? selectedTrain.number : (ticketMode === 'PLATFORM' ? 'PLATFORM-PASS' : 'ALL-UNRESERVED'),
+      trainName: selectedTrain ? selectedTrain.name : (ticketMode === 'PLATFORM' ? `Platform Pass (${fromStation.name})` : `General Second Class (${dynamicUtsFare?.trainType || 'ORDINARY'})`),
       passengerName: primaryPassenger.name,
       from: fromStation.code,
+      boardingStation: selectedBoardingStation || `${selectedTrain?.fromName || fromStation.name} - ${fromStation.code}`,
       to: ticketMode === 'PLATFORM' ? fromStation.code : toStation.code,
       date: formatDisplayDate(journeyDate),
-      departureTime: selectedTrain ? selectedTrain.departure : "11:50",
-      arrivalTime: selectedTrain ? selectedTrain.arrival : "16:30",
-      classType: selectedClass ? selectedClass.code : (ticketMode === 'UTS' ? 'GEN' : 'PLATFORM'),
-      className: selectedClass ? selectedClass.code : (ticketMode === 'UTS' ? 'GEN' : 'PLATFORM'),
+      departureTime: selectedTrain ? selectedTrain.departure : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      arrivalTime: selectedTrain ? selectedTrain.arrival : (ticketMode === 'PLATFORM' ? '+2 Hours' : 'Midnight Today'),
+      classType: selectedClass ? selectedClass.code : (ticketMode === 'UTS' ? 'GEN / II' : 'PLATFORM'),
+      className: selectedClass ? selectedClass.code : (ticketMode === 'UTS' ? 'General (II)' : 'Platform Entry'),
       fare: fareAmount,
       paymentMethod: "R-WALLET (Official)",
       status: "CONFIRMED",
       ticketType: ticketMode,
-      coach: preferredCoach ? preferredCoach.trim() : (ticketMode === 'PLATFORM' ? 'NA' : 'B2'),
-      seat: ticketMode === 'PLATFORM' ? 'Platform Pass' : (primaryPassenger.berth || '23 (MB)'),
-      platform: selectedTrain?.platform || 'PF 1',
-      quota: selectedQuota,
+      coach: preferredCoach ? preferredCoach.trim() : (ticketMode === 'PLATFORM' ? 'Platform Entry' : (ticketMode === 'UTS' ? 'General GS/II' : 'B2')),
+      seat: ticketMode === 'PLATFORM' ? `${passengers.length} Person(s)` : (ticketMode === 'UTS' ? `${passengers.length} Seat(s) Unreserved` : (primaryPassenger.berth || '23 (MB)')),
+      platform: selectedTrain?.platform || 'Any Platform',
+      quota: ticketMode === 'UTS' ? 'GENERAL' : selectedQuota,
       age: parseInt(primaryPassenger.age || '27', 10),
       gender: primaryPassenger.gender || 'M',
       userId: user?.id || null,
       email: contactEmail || user?.email || '',
       mobile: contactMobile || user?.mobile || '',
-      passengersCount: passengers.length
+      passengersCount: passengers.length,
+      reservationChoice: reservationChoice || 'None'
     };
 
     try {
@@ -439,14 +571,22 @@ export default function BookingPanel({
         body: JSON.stringify(newBooking)
       });
 
-      // 2. Deduct fare from PostgreSQL R-Wallet balance
+      // 2. Deduct fare from PostgreSQL R-Wallet balance & log in passbook ledger
       if (user && user.id) {
         const nextBalance = Math.max(0, walletBalance - fareAmount);
         setWalletBalance(nextBalance);
-        await fetch(`${API_BASE}/profile/${user.id}`, {
-          method: 'PUT',
+        if (onUpdateUser) {
+          onUpdateUser({ ...user, wallet: nextBalance });
+        }
+        await fetch(`${API_BASE}/wallet/debit`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ walletBalance: nextBalance })
+          body: JSON.stringify({ 
+            userId: user.id, 
+            amount: fareAmount, 
+            pnr: newBooking.pnr,
+            title: `Ticket Booking (${newBooking.trainNumber || ''} - ${newBooking.selectedClass || '3A'})` 
+          })
         }).catch(() => {});
       }
 
@@ -572,7 +712,7 @@ export default function BookingPanel({
       </div>
 
       {/* Dynamic From/To Station Selector Box */}
-      <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+      <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <div 
             className="flex-1 bg-slate-50 hover:bg-slate-100 p-2.5 rounded-2xl border border-slate-200/80 cursor-pointer transition"
@@ -666,7 +806,7 @@ export default function BookingPanel({
             </div>
           ) : trainList.length > 0 ? (
             trainList.map((train) => (
-              <div key={train.id || train.number} className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+              <div key={train.id || train.number} className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-black text-slate-900">{train.name}</h3>
@@ -729,7 +869,7 @@ export default function BookingPanel({
                 </div>
 
                 {/* Class Selection Boxes with Real Dynamic API Data */}
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-3 gap-1.5">
                   {(train.classes || []).map((cls) => {
                     const isSelected = selectedClass && selectedClass.code === cls.code && selectedTrain?.number === train.number;
                     const isAvailable = cls.status === 'AVAILABLE' || cls.statusText?.startsWith('AVAILABLE');
@@ -751,7 +891,7 @@ export default function BookingPanel({
                         key={cls.code}
                         type="button"
                         onClick={() => handleSelectClass(train, cls)}
-                        className={`p-2 rounded-2xl text-left transition flex flex-col justify-between active:scale-95 border ${
+                        className={`p-1.5 rounded-xl text-left transition flex flex-col justify-between active:scale-95 border ${
                           isSelected 
                             ? 'bg-blue-600 border-blue-700 text-white shadow-md shadow-blue-500/25 ring-2 ring-blue-400' 
                             : 'border-slate-200/80 bg-slate-50/70 hover:bg-blue-50/50 hover:border-blue-300'
@@ -761,7 +901,7 @@ export default function BookingPanel({
                           <span className={`font-black text-xs ${isSelected ? 'text-white' : 'text-slate-900'}`}>{cls.code}</span>
                           <span className={`text-[10px] font-bold ${isSelected ? 'text-blue-100' : 'text-slate-700'}`}>₹{cls.fare}</span>
                         </div>
-                        <div className={`text-[8.5px] font-black truncate max-w-full mt-1.5 px-1 py-0.5 rounded ${
+                        <div className={`text-[8.5px] font-black truncate max-w-full px-1 py-0.5 rounded ${
                           isSelected ? 'bg-white/20 text-white' : statusColor
                         }`}>
                           {displayText}
@@ -773,10 +913,140 @@ export default function BookingPanel({
               </div>
             ))
           ) : (
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 text-center text-xs text-slate-500">
-              No trains found for this route. Try changing stations.
+            <div className="bg-white p-8 rounded-3xl border border-slate-200 text-center space-y-2">
+              <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                <Train className="w-5 h-5" />
+              </div>
+              <div className="text-xs font-bold text-slate-700">No Live Trains Found for This Route</div>
+              <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                No direct trains are running on this date or live route data is currently unavailable. Please change stations or select another date.
+              </p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* UTS (Daily) Unreserved Fare Calculation & Quick Booking Form */}
+      {ticketMode === 'UTS' && (
+        <div className="bg-white p-4 rounded-3xl border border-emerald-200 shadow-sm space-y-3.5 animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <div>
+              <span className="text-xs font-black text-emerald-800">UTS Daily Unreserved Journey</span>
+              <p className="text-[10px] text-slate-400">Paperless Passenger / Express Journey Ticket</p>
+            </div>
+            <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">
+              Live Fare Engine
+            </span>
+          </div>
+
+          {/* Train Type Selection (Ordinary Passenger / Mail Express / Superfast) */}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Train Type Allowed</label>
+            <select
+              value={utsTrainType}
+              onChange={(e) => setUtsTrainType(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-emerald-600 focus:bg-white transition"
+            >
+              <option value="ORDINARY">Ordinary / Passenger Trains</option>
+              <option value="MAIL_EXP">Mail / Express Trains</option>
+              <option value="SUPERFAST">Superfast Express (+₹15 Surcharge)</option>
+            </select>
+          </div>
+
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-slate-500">From ➔ To:</span>
+              <strong className="text-slate-800">{fromStation.code} ({fromStation.name}) ➔ {toStation.code} ({toStation.name})</strong>
+            </div>
+            {dynamicUtsFare?.distanceKm && (
+              <div className="flex justify-between">
+                <span className="text-slate-500">Track Distance:</span>
+                <strong className="text-slate-800">{dynamicUtsFare.distanceKm} km</strong>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-slate-500">Train Type:</span>
+              <strong className="text-emerald-800 font-bold">
+                {utsTrainType === 'SUPERFAST' ? 'Superfast (+₹15 SF)' : (utsTrainType === 'MAIL_EXP' ? 'Mail / Express' : 'Ordinary Passenger')}
+              </strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Passengers:</span>
+              <strong className="text-slate-800">{passengers.length} Adult</strong>
+            </div>
+            <div className="flex justify-between border-t border-slate-200 pt-2 font-black">
+              <span className="text-slate-700">Total Unreserved Fare:</span>
+              <span className="text-emerald-700 text-sm">
+                {loadingUtsFare ? '...' : `₹${dynamicUtsFare?.totalFare || (passengers.length * 35)}.00`}
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={isSubmitting || loadingUtsFare}
+            onClick={handleConfirmBooking}
+            className="w-full bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white font-bold py-3.5 rounded-2xl text-xs shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Issuing UTS Ticket in Database...</span>
+              </>
+            ) : (
+              <span>Book Paperless UTS Ticket (₹{dynamicUtsFare?.totalFare || (passengers.length * 35)})</span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Platform Ticket Quick Booking Form */}
+      {ticketMode === 'PLATFORM' && (
+        <div className="bg-white p-4 rounded-3xl border border-amber-200 shadow-sm space-y-3.5 animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <div>
+              <span className="text-xs font-black text-amber-800">Platform Entry Ticket</span>
+              <p className="text-[10px] text-slate-400">Valid for 2 Hours across All Platforms</p>
+            </div>
+            <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">
+              IRCTC / UTS Official
+            </span>
+          </div>
+
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Station:</span>
+              <strong className="text-slate-800">{fromStation.code} - {fromStation.name}</strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Platform Validity:</span>
+              <strong className="text-slate-800">2 Hours from Booking Time</strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Persons:</span>
+              <strong className="text-slate-800">{passengers.length} Person(s)</strong>
+            </div>
+            <div className="flex justify-between border-t border-slate-200 pt-2 font-black">
+              <span className="text-slate-700">Platform Fee:</span>
+              <span className="text-amber-700 text-sm">₹{passengers.length * 10}.00</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleConfirmBooking}
+            className="w-full bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold py-3.5 rounded-2xl text-xs shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 transition"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Issuing Platform Pass in Database...</span>
+              </>
+            ) : (
+              <span>Book Digital Platform Pass (₹{passengers.length * 10})</span>
+            )}
+          </button>
         </div>
       )}
 
@@ -818,13 +1088,27 @@ export default function BookingPanel({
 
             {/* Boarding Station Dropdown Box */}
             <div className="pt-2">
-              <div className="bg-white border border-blue-200 rounded-xl p-2.5 flex items-center justify-between shadow-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  if (boardingHalts.length === 0) {
+                    fetchHaltsForSelectedTrain();
+                  }
+                  setShowBoardingModal(true);
+                }}
+                className="w-full text-left bg-white border border-blue-200 hover:border-blue-400 rounded-xl p-2.5 flex items-center justify-between shadow-xs transition active:scale-[0.99] group"
+              >
                 <div>
                   <span className="text-[9px] text-slate-400 font-bold uppercase block leading-tight">Boarding Station</span>
-                  <span className="text-xs font-black text-slate-800">{selectedBoardingStation || `${selectedTrain.fromName || fromStation.name} - ${fromStation.code}`}</span>
+                  <span className="text-xs font-black text-slate-800 group-hover:text-blue-700 transition">
+                    {selectedBoardingStation || `${selectedTrain.fromName || fromStation.name} - ${fromStation.code}`}
+                  </span>
                 </div>
-                <ChevronDown className="w-4 h-4 text-blue-600" />
-              </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-blue-600 font-bold hidden sm:inline">Change</span>
+                  <ChevronDown className="w-4 h-4 text-blue-600 group-hover:translate-y-0.5 transition" />
+                </div>
+              </button>
             </div>
           </div>
 
@@ -835,7 +1119,7 @@ export default function BookingPanel({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddPassengerModal(true)}
+                  onClick={handleOpenAddPassengerModal}
                   className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline flex items-center gap-0.5"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add New
@@ -860,16 +1144,26 @@ export default function BookingPanel({
                       {p.age}Y, {p.gender}, {p.berth}
                     </div>
                   </div>
-                  {passengers.length > 1 && (
+                  <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => handleRemovePassenger(p.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
-                      title="Remove passenger"
+                      onClick={() => handleEditPassenger(p)}
+                      className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition"
+                      title="Edit passenger details"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                  )}
+                    {passengers.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePassenger(p.id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
+                        title="Remove passenger"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -892,7 +1186,7 @@ export default function BookingPanel({
             </div>
 
             {isEditingContact ? (
-              <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="grid grid-cols-1 gap-2 pt-1">
                 <div>
                   <label className="text-[9px] font-bold text-slate-400 uppercase">Mobile</label>
                   <input 
@@ -958,13 +1252,22 @@ export default function BookingPanel({
           </div>
 
           {/* Reservation Choice (Optional) */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setShowReservationChoiceModal(true)}
+            className="w-full text-left bg-white border border-slate-200/80 hover:border-blue-400 rounded-2xl p-4 shadow-xs flex items-center justify-between transition group active:scale-[0.99]"
+          >
             <div>
-              <div className="text-xs font-black text-slate-900">Reservation Choice <span className="font-normal text-slate-400">(Optional)</span></div>
-              <div className="text-[11px] text-slate-500 mt-0.5">{reservationChoice}</div>
+              <div className="text-xs font-black text-slate-900 group-hover:text-blue-700 transition">
+                Reservation Choice <span className="font-normal text-slate-400">(Optional)</span>
+              </div>
+              <div className="text-[11px] text-blue-600 font-bold mt-0.5">{reservationChoice}</div>
             </div>
-            <ChevronDown className="w-4 h-4 text-blue-600" />
-          </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-medium">Select</span>
+              <ChevronDown className="w-4 h-4 text-blue-600 group-hover:translate-y-0.5 transition" />
+            </div>
+          </button>
 
           {/* Travel Insurance Section (Exact match to screenshot) */}
           <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-2.5">
@@ -1150,21 +1453,29 @@ export default function BookingPanel({
         </div>
       )}
 
-      {/* MODAL: ADD NEW PASSENGER */}
+      {/* MODAL: ADD / EDIT PASSENGER */}
       {showAddPassengerModal && (
         <div 
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in"
-          onClick={() => setShowAddPassengerModal(false)}
+          onClick={() => {
+            setShowAddPassengerModal(false);
+            setEditingPassengerId(null);
+          }}
         >
           <div 
             className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 space-y-3.5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <h3 className="text-sm font-black text-slate-900">Add Passenger Details</h3>
+              <h3 className="text-sm font-black text-slate-900">
+                {editingPassengerId ? 'Edit Passenger Details' : 'Add Passenger Details'}
+              </h3>
               <button 
                 type="button" 
-                onClick={() => setShowAddPassengerModal(false)}
+                onClick={() => {
+                  setShowAddPassengerModal(false);
+                  setEditingPassengerId(null);
+                }}
                 className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-xs"
               >
                 <X className="w-3.5 h-3.5" />
@@ -1233,7 +1544,7 @@ export default function BookingPanel({
                 type="submit"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs shadow-md shadow-blue-600/25 active:scale-95 transition mt-2"
               >
-                Add Passenger
+                {editingPassengerId ? 'Update Passenger' : 'Add Passenger'}
               </button>
             </form>
           </div>
@@ -1565,6 +1876,205 @@ export default function BookingPanel({
           </div>
         );
       })()}
+
+      {/* MODAL / BOTTOM SHEET: SELECT BOARDING STATION (DYNAMIC FROM BACKEND API) */}
+      {showBoardingModal && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in"
+          onClick={() => setShowBoardingModal(false)}
+        >
+          <div 
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Choose Boarding Station</h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Train: <strong className="text-blue-600">{selectedTrain?.number} - {selectedTrain?.name}</strong>
+                </p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowBoardingModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 space-y-2 pr-1 divide-y divide-slate-100">
+              {loadingHalts ? (
+                <div className="py-8 text-center text-slate-400 text-xs font-semibold flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                  <span>Fetching live train route halts...</span>
+                </div>
+              ) : boardingHalts.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 text-xs">
+                  No intermediate stations found. Boarding at origin station.
+                </div>
+              ) : (
+                boardingHalts.map((halt, idx) => {
+                  const haltLabel = `${halt.name || halt.code} (${halt.code})`;
+                  const isCurrentSelected = selectedBoardingStation 
+                    ? selectedBoardingStation.includes(halt.code)
+                    : (idx === 0 || halt.code === fromStation.code);
+
+                  return (
+                    <button
+                      key={`${halt.code}-${idx}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedBoardingStation(`${halt.name || halt.code} - ${halt.code}`);
+                        setShowBoardingModal(false);
+                      }}
+                      className={`w-full text-left p-3 rounded-xl transition flex items-center justify-between ${
+                        isCurrentSelected 
+                          ? 'bg-blue-50 border border-blue-200 text-blue-900' 
+                          : 'hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black uppercase tracking-tight">{halt.name || halt.code}</span>
+                          <span className="text-[10px] font-mono font-bold bg-slate-200/80 px-1.5 py-0.5 rounded text-slate-700">
+                            {halt.code}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium mt-1 flex items-center gap-2">
+                          {halt.departure && <span>Dep: <strong className="text-slate-700">{halt.departure}</strong></span>}
+                          {halt.arrival && halt.arrival !== halt.departure && <span>• Arr: {halt.arrival}</span>}
+                          {halt.day && <span>• Day {halt.day}</span>}
+                        </div>
+                      </div>
+
+                      {isCurrentSelected && (
+                        <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+              <span>Selected: <strong className="text-slate-800">{selectedBoardingStation || `${selectedTrain?.fromName || fromStation.name} - ${fromStation.code}`}</strong></span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBoardingStation(`${selectedTrain?.fromName || fromStation.name} - ${fromStation.code}`);
+                  setShowBoardingModal(false);
+                }}
+                className="text-blue-600 font-bold hover:underline"
+              >
+                Reset to Origin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL / BOTTOM SHEET: RESERVATION CHOICE (IRCTC OFFICIAL OPTIONS) */}
+      {showReservationChoiceModal && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in"
+          onClick={() => setShowReservationChoiceModal(false)}
+        >
+          <div 
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Reservation Choice</h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Select booking condition for berth confirmation
+                </p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowReservationChoiceModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 overflow-y-auto pr-1">
+              {[
+                {
+                  id: 'None',
+                  title: 'None (Default)',
+                  desc: 'Normal booking without specific berth placement conditions.'
+                },
+                {
+                  id: 'Book, only if all berths are allotted in same coach',
+                  title: 'Book only if all berths are in same coach',
+                  desc: 'Ensures your entire travelling party gets berths in the identical coach.'
+                },
+                {
+                  id: 'Book, only if at least 1 lower berth is allotted',
+                  title: 'Book only if at least 1 lower berth is allotted',
+                  desc: 'Recommended for senior citizens or passengers with physical preferences.'
+                },
+                {
+                  id: 'Book, only if at least 2 lower berths are allotted',
+                  title: 'Book only if at least 2 lower berths are allotted',
+                  desc: 'Applicable when travelling with multiple elderly or families.'
+                }
+              ].map((choice) => {
+                const isSelected = reservationChoice === choice.id;
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    onClick={() => {
+                      setReservationChoice(choice.id);
+                      setShowReservationChoiceModal(false);
+                    }}
+                    className={`w-full text-left p-3.5 rounded-2xl transition border flex items-start justify-between gap-3 ${
+                      isSelected 
+                        ? 'bg-blue-50 border-blue-400 text-blue-900 shadow-xs' 
+                        : 'bg-slate-50/70 border-slate-200/80 hover:bg-white hover:border-blue-300 text-slate-800'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="text-xs font-black leading-tight flex items-center gap-2">
+                        <span>{choice.title}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                        {choice.desc}
+                      </p>
+                    </div>
+
+                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                      isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white'
+                    }`}>
+                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500">Currently: <strong className="text-slate-800">{reservationChoice}</strong></span>
+              <button
+                type="button"
+                onClick={() => {
+                  setReservationChoice('None');
+                  setShowReservationChoiceModal(false);
+                }}
+                className="text-blue-600 font-bold hover:underline"
+              >
+                Reset to None
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

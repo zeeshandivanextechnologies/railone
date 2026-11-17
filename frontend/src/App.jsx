@@ -48,7 +48,10 @@ function AppContent({
   sharedOriginStation,
   setSharedOriginStation,
   sharedDestStation,
-  setSharedDestStation
+  setSharedDestStation,
+  stations,
+  trackingTrainNumber,
+  setTrackingTrainNumber
 }) {
   const { t, language, changeLanguage } = useLanguage();
 
@@ -144,7 +147,12 @@ function AppContent({
                 {/* 1. HOME SCREEN */}
                 {activeTab === 'home' && (
                   <HomePanel 
-                    onNavigate={(tab) => setActiveTab(tab)}
+                    onNavigate={(tab, params) => {
+                      if (params?.trainNumber) {
+                        setTrackingTrainNumber(params.trainNumber);
+                      }
+                      setActiveTab(tab);
+                    }}
                     bookings={bookings}
                     trains={trains}
                     openTicketModal={(ticket) => setSelectedTicketForModal(ticket)}
@@ -159,7 +167,7 @@ function AppContent({
                 {/* 2. RESERVED BOOKING SCREEN */}
                 {activeTab === 'booking' && (
                   <BookingPanel 
-                    stations={STATIONS}
+                    stations={stations}
                     trains={trains}
                     user={user}
                     walletBalance={walletBalance}
@@ -172,13 +180,14 @@ function AppContent({
                       if (f) setSharedOriginStation(f);
                       if (t) setSharedDestStation(t);
                     }}
+                    onUpdateUser={handleUpdateUser}
                   />
                 )}
 
                 {/* 3. UTS & PLATFORM TICKETING SCREEN */}
                 {activeTab === 'uts' && (
                   <UTSPlatformPanel 
-                    stations={STATIONS}
+                    stations={stations}
                     user={user}
                     walletBalance={walletBalance}
                     setWalletBalance={setWalletBalance}
@@ -187,6 +196,7 @@ function AppContent({
                     onOpenAuth={handleOpenAuth}
                     initialFromStation={sharedOriginStation}
                     initialToStation={sharedDestStation}
+                    onUpdateUser={handleUpdateUser}
                   />
                 )}
 
@@ -209,6 +219,7 @@ function AppContent({
                   <TrackingPanel 
                     trains={trains}
                     bookings={bookings}
+                    initialTrainNumber={trackingTrainNumber}
                   />
                 )}
 
@@ -243,6 +254,11 @@ function AppContent({
                 {activeTab === 'services' && (
                   <ServicesPanel 
                     bookings={bookings}
+                    user={user}
+                    walletBalance={walletBalance}
+                    setWalletBalance={setWalletBalance}
+                    onOpenAuth={handleOpenAuth}
+                    onNavigate={(tab) => setActiveTab(tab)}
                   />
                 )}
 
@@ -250,6 +266,7 @@ function AppContent({
                 {activeTab === 'profile' && (
                   <ProfilePanel 
                     user={user}
+                    walletBalance={walletBalance}
                     onLogout={handleLogout}
                     onOpenAuth={handleOpenAuth}
                     bookings={bookings}
@@ -309,10 +326,12 @@ export default function App() {
     return localStorage.getItem('railone_active_tab') || 'home';
   });
 
-  const [trains, setTrains] = useState(INITIAL_TRAINS);
-  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
+  const [trains, setTrains] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [stations, setStations] = useState([]);
   const [selectedTicketForModal, setSelectedTicketForModal] = useState(null);
   const [walletBalance, setWalletBalance] = useState(480);
+  const [trackingTrainNumber, setTrackingTrainNumber] = useState('');
 
   // Global shared station search state between HomePanel and BookingPanel
   const [sharedOriginStation, setSharedOriginStation] = useState({ code: 'NDLS', name: 'New Delhi' });
@@ -350,14 +369,23 @@ export default function App() {
     localStorage.setItem('railone_has_entered', hasEnteredApp ? 'true' : 'false');
   }, [hasEnteredApp]);
 
-  // Fetch Live Trains & Bookings from Backend PostgreSQL
+  // Fetch Live Trains, Bookings & Stations from Backend PostgreSQL
   useEffect(() => {
     const fetchInitialData = async () => {
-      const liveTrains = await passengerApi.getTrains(INITIAL_TRAINS);
-      setTrains(liveTrains);
-
-      const liveBookings = await passengerApi.getBookings(INITIAL_BOOKINGS, user?.id || null);
-      setBookings(liveBookings);
+      const [liveTrains, liveBookings, liveStations] = await Promise.all([
+        passengerApi.getTrains(),
+        passengerApi.getBookings([], user?.id || null),
+        passengerApi.getStations()
+      ]);
+      if (liveTrains && liveTrains.length > 0) setTrains(liveTrains);
+      if (liveBookings) setBookings(liveBookings);
+      if (liveStations && liveStations.length > 0) {
+        setStations(liveStations);
+        const ndls = liveStations.find(s => s.code === 'NDLS') || liveStations[0];
+        const mmct = liveStations.find(s => s.code === 'MMCT') || liveStations[1] || liveStations[0];
+        if (ndls) setSharedOriginStation(ndls);
+        if (mmct) setSharedDestStation(mmct);
+      }
     };
     fetchInitialData();
   }, [user?.id]);
@@ -464,6 +492,9 @@ export default function App() {
         setSharedOriginStation={setSharedOriginStation}
         sharedDestStation={sharedDestStation}
         setSharedDestStation={setSharedDestStation}
+        stations={stations}
+        trackingTrainNumber={trackingTrainNumber}
+        setTrackingTrainNumber={setTrackingTrainNumber}
       />
     </LanguageProvider>
   );

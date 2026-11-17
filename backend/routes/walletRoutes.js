@@ -171,5 +171,102 @@ router.post('/verify-payment', async (req, res) => {
   }
 });
 
+// 4. DEDUCT / DEBIT FROM WALLET (e.g. Booking train ticket or UTS)
+router.post('/debit', async (req, res) => {
+  try {
+    const { userId, amount, title, pnr } = req.body;
+    const numAmount = parseFloat(amount);
+
+    if (!userId || !numAmount || numAmount <= 0) {
+      return res.status(400).json({ error: 'Valid userId and positive debit amount are required.' });
+    }
+
+    // Check user balance first
+    const userRes = await pool.query('SELECT wallet_balance FROM users WHERE id = $1', [userId]);
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentBalance = parseFloat(userRes.rows[0].wallet_balance || 0);
+    if (currentBalance < numAmount) {
+      return res.status(400).json({ 
+        error: `Insufficient R-Wallet balance (₹${currentBalance}). Required ₹${numAmount}.`,
+        balance: currentBalance 
+      });
+    }
+
+    const newBalance = Math.round((currentBalance - numAmount) * 100) / 100;
+
+    // 1. Update user wallet balance
+    await pool.query('UPDATE users SET wallet_balance = $1 WHERE id = $2', [newBalance, userId]);
+
+    // 2. Insert DEBIT record in wallet_transactions
+    const txnId = `TXN-${Math.floor(10000 + Math.random() * 90000)}`;
+    const txnTitle = title || (pnr ? `Ticket Booking (PNR: ${pnr})` : 'Ticket Fare Payment');
+
+    const insertRes = await pool.query(
+      `INSERT INTO wallet_transactions 
+        (user_id, txn_id, type, title, amount, method, status, cashback)
+       VALUES ($1, $2, 'DEBIT', $3, $4, 'R-WALLET', 'SUCCESS', 0)
+       RETURNING txn_id as id, type, title, amount, method, status, cashback,
+                 TO_CHAR(created_at, 'DD Mon YYYY, HH12:MI AM') as date`,
+      [userId, txnId, txnTitle, numAmount]
+    );
+
+    res.json({
+      success: true,
+      message: 'R-Wallet debited successfully',
+      balance: newBalance,
+      transaction: insertRes.rows[0]
+    });
+  } catch (err) {
+    console.error('Wallet Debit Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. COMPATIBILITY ALIAS: verify-recharge for fast mock or services recharge
+router.post('/verify-recharge', async (req, res) => {
+  try {
+    const { userId, amount, paymentId } = req.body;
+    const numAmount = parseFloat(amount);
+
+    if (!userId || !numAmount || numAmount <= 0) {
+      return res.status(400).json({ error: 'Valid userId and positive recharge amount are required.' });
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE users 
+       SET wallet_balance = COALESCE(wallet_balance, 0) + $1 
+       WHERE id = $2 
+       RETURNING wallet_balance`,
+      [numAmount, userId]
+    );
+
+    if (updateRes.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const newBalance = parseFloat(updateRes.rows[0].wallet_balance);
+    const txnId = `TXN-${Math.floor(10000 + Math.random() * 90000)}`;
+
+    await pool.query(
+      `INSERT INTO wallet_transactions 
+        (user_id, txn_id, type, title, amount, method, razorpay_payment_id, status, cashback)
+       VALUES ($1, $2, 'CREDIT', 'Quick R-Wallet Recharge', $3, 'Online UPI', $4, 'SUCCESS', 0)`,
+      [userId, txnId, numAmount, paymentId || `pay_${Date.now()}`]
+    );
+
+    res.json({
+      success: true,
+      newBalance: newBalance,
+      balance: newBalance,
+      message: 'Recharge successful'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
 

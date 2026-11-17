@@ -39,22 +39,35 @@ export default function HomePanel({
   const { t } = useLanguage();
   const nextJourney = bookings[0];
 
-  // Dynamic Station Selection state fetched live from RailRadar API
+  // Dynamic Station Selection state fetched live from RailCore Tech API
   const [stationList, setStationList] = useState([]);
-  const [internalFromStation, setInternalFromStation] = useState({ code: 'NDLS', name: 'New Delhi' });
-  const [internalToStation, setInternalToStation] = useState({ code: 'MMCT', name: 'Mumbai Central' });
+  const [internalFromStation, setInternalFromStation] = useState(null);
+  const [internalToStation, setInternalToStation] = useState(null);
 
-  const fromStation = propFromStation || internalFromStation;
+  const fromStation = propFromStation || internalFromStation || { code: '---', name: 'Select Origin' };
   const setFromStation = propSetFromStation || setInternalFromStation;
-  const toStation = propToStation || internalToStation;
+  const toStation = propToStation || internalToStation || { code: '---', name: 'Select Destination' };
   const setToStation = propSetToStation || setInternalToStation;
 
   const [selectingStationType, setSelectingStationType] = useState(null); // 'FROM' | 'TO' | null
   const [searchFilter, setSearchFilter] = useState('');
   const [selectedLetter, setSelectedLetter] = useState('ALL'); // A to Z filter
   const [loadingStations, setLoadingStations] = useState(false);
+  const [liveFeaturedTrains, setLiveFeaturedTrains] = useState([]);
 
-  // 1. Initial Load: Fetch default active network stations from backend
+  // Fetch real-time live trains from RailCore API gateway
+  useEffect(() => {
+    fetch('http://localhost:5000/api/trains/featured-live')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setLiveFeaturedTrains(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // 1. Initial Load: Fetch default active network stations from RailCore API via backend
   useEffect(() => {
     setLoadingStations(true);
     fetch('http://localhost:5000/api/trains/stations')
@@ -63,10 +76,10 @@ export default function HomePanel({
         if (data && data.length > 0) {
           setStationList(data);
           if (!propFromStation && !propToStation) {
-            const ndls = data.find(s => s.code === 'NDLS') || data[0];
-            const mmct = data.find(s => s.code === 'MMCT') || data[1] || data[0];
-            if (ndls) setFromStation(ndls);
-            if (mmct) setToStation(mmct);
+            setFromStation(data[0]);
+            if (data.length > 1) {
+              setToStation(data[1]);
+            }
           }
         }
       })
@@ -353,7 +366,7 @@ export default function HomePanel({
           </div>
         </div>
 
-        {/* Realtime Live Train Updates (Powered by RailRadar API) */}
+        {/* Realtime Live Train Updates (Powered by RailCore GPS API) */}
         <div className="bg-slate-900 text-white p-4 rounded-3xl shadow-md border border-slate-800">
           <div className="flex items-center justify-between text-xs mb-3">
             <span className="text-amber-400 font-bold flex items-center gap-2">
@@ -361,47 +374,54 @@ export default function HomePanel({
               Live Train Updates
             </span>
             <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">
-              RailRadar Satellite GPS
+              RailCore Satellite GPS
             </span>
           </div>
 
           <div className="space-y-2.5">
-            {trains && trains.slice(0, 3).map((t) => (
-              <div 
-                key={t.id || t.number} 
-                onClick={() => onNavigate('tracking')}
-                className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-2xl flex items-center justify-between text-xs border border-slate-700/50 cursor-pointer transition active:scale-[0.99]"
-              >
-                <div>
-                  <div className="font-bold text-slate-100 flex items-center gap-1.5">
-                    <span>{t.name}</span>
-                    <span className="font-mono text-slate-400 font-normal">({t.number})</span>
-                    {t.liveStatus?.isRailRadarLive && (
-                      <span className="text-[8px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded">
-                        GPS LIVE
-                      </span>
-                    )}
+            {liveFeaturedTrains && liveFeaturedTrains.length > 0 ? (
+              liveFeaturedTrains.map((t) => (
+                <div 
+                  key={t.id || t.number} 
+                  onClick={() => onNavigate('tracking', { trainNumber: t.number || t.id })}
+                  className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-2xl flex items-center justify-between text-xs border border-slate-700/50 cursor-pointer transition active:scale-[0.99]"
+                >
+                  <div>
+                    <div className="font-bold text-slate-100 flex items-center gap-1.5">
+                      <span>{t.name}</span>
+                      <span className="font-mono text-slate-400 font-normal">({t.number})</span>
+                      {t.liveStatus?.isRailRadarLive && (
+                        <span className="text-[8px] whitespace-nowrap font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded">
+                          GPS LIVE
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-slate-500" />
+                      <span>At {t.liveStatus?.currentStation || t.currentLocation || 'In Transit'}</span>
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
-                    <MapPin className="w-3 h-3 text-slate-500" />
-                    <span>At {t.liveStatus?.currentStation || t.currentLocation || 'In Transit'}</span>
+                  <div className="text-right">
+                    <div className={`font-bold ${
+                      (t.liveStatus?.delay === 'On Time' || t.liveStatus?.delay?.startsWith('0'))
+                        ? 'text-emerald-400' 
+                        : 'text-amber-400'
+                    }`}>
+                      {t.liveStatus?.delay || 'On Time'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-end gap-1">
+                      <span>{t.liveStatus?.platform || 'PF 1'}</span>
+                      <ChevronRight className="w-3 h-3 text-slate-500" />
+                    </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className={`font-bold ${
-                    (t.liveStatus?.delay === 'On Time' || t.liveStatus?.delay?.startsWith('0'))
-                      ? 'text-emerald-400' 
-                      : 'text-amber-400'
-                  }`}>
-                    {t.liveStatus?.delay || 'On Time'}
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-end gap-1">
-                    <span>{t.liveStatus?.platform || 'PF 1'}</span>
-                    <ChevronRight className="w-3 h-3 text-slate-500" />
-                  </div>
-                </div>
+              ))
+            ) : (
+              <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-800 text-center text-xs text-slate-400">
+                <span className="text-amber-400 font-bold block mb-1">Live Updates Fetching...</span>
+                <span>Connecting to RailCore satellite live feed.</span>
               </div>
-            ))}
+            )}
           </div>
         </div>
 
